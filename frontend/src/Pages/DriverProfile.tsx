@@ -224,31 +224,6 @@ export const DriverProfile = () => {
 
     return (
         <div className="p-6 bg-black text-white min-h-screen flex flex-col gap-6">
-            
-            <style>{`
-                .live-playhead .uplot .u-cursor-x {
-                    width: 0px !important;
-                    border-left: 2px solid #22c55e !important;
-                    box-shadow: 0 0 10px rgba(34, 197, 94, 0.6) !important;
-                }
-                .live-playhead .uplot .u-cursor-x::after {
-                    background-color: #22c55e;
-                    box-shadow: 0 0 10px #22c55e;
-                }
-                .hist-playhead .uplot .u-cursor-x {
-                    width: 0px !important;
-                    border-left: 2px solid #3b82f6 !important;
-                    box-shadow: 0 0 10px rgba(59, 130, 246, 0.6) !important;
-                }
-                .hist-playhead .uplot .u-cursor-x::after {
-                    background-color: #3b82f6;
-                    box-shadow: 0 0 10px #3b82f6;
-                }
-                .uplot .u-cursor-x::after {
-                    content: ''; position: absolute; top: 0px; left: -5px; width: 8px; height: 8px; border-radius: 50%;
-                }
-                .uplot .u-cursor-y { display: none !important; }
-            `}</style>
 
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-6">
