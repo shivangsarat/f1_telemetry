@@ -1,5 +1,5 @@
 // Toggle this to TRUE during development to route all traffic through your Time Machine
-const USE_MOCK_SERVER = true;
+const USE_MOCK_SERVER = false;
 
 export const OPENF1_BASE = USE_MOCK_SERVER 
     ? 'http://localhost:8081' 

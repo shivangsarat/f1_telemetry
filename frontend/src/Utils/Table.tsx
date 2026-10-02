@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface Column<T> {
     header: string;
@@ -9,16 +9,18 @@ interface TableProps<T> {
     data: T[];
     columns: Column<T>[];
     expandableRender?: (row: T) => React.ReactNode;
+    getRowKey?: (row: T) => string | number; // Added to keep track of exactly which row is toggled
 }
 
-export function Table<T>({ data, columns, expandableRender }: TableProps<T>) {
+export function Table<T>({ data, columns, expandableRender, getRowKey }: TableProps<T>) {
+    const [expandedRow, setExpandedRow] = useState<string | number | null>(null);
+
     if (!data || !Array.isArray(data)) {
         return <div className="p-4 text-gray-500">No data available</div>;
     }
 
     return (
         <div className="w-full relative">
-            {/* border-separate prevents sticky header rendering bugs in modern browsers */}
             <table className="w-full border-separate border-spacing-0 text-sm text-left">
                 <thead>
                     <tr>
@@ -33,24 +35,32 @@ export function Table<T>({ data, columns, expandableRender }: TableProps<T>) {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/50">
-                    {data.map((row, idx) => (
-                        <React.Fragment key={idx}>
-                            <tr className="hover:bg-gray-800/30 transition-colors">
-                                {columns.map((col, colIdx) => (
-                                    <td key={colIdx} className="p-4">
-                                        {typeof col.accessor === 'function' ? col.accessor(row) : String(row[col.accessor] || '-')}
-                                    </td>
-                                ))}
-                            </tr>
-                            {expandableRender && (
-                                <tr>
-                                    <td colSpan={columns.length} className="p-0 border-b border-gray-800/50">
-                                        {expandableRender(row)}
-                                    </td>
+                    {data.map((row, idx) => {
+                        const rowKey = getRowKey ? getRowKey(row) : idx;
+                        const isExpanded = expandedRow === rowKey;
+                        
+                        return (
+                            <React.Fragment key={rowKey}>
+                                <tr 
+                                    onClick={() => expandableRender && setExpandedRow(isExpanded ? null : rowKey)}
+                                    className={`group transition-colors ${expandableRender ? 'cursor-pointer hover:bg-gray-800/50' : 'hover:bg-gray-800/30'} ${isExpanded ? 'bg-gray-800/30' : ''}`}
+                                >
+                                    {columns.map((col, colIdx) => (
+                                        <td key={colIdx} className="p-4">
+                                            {typeof col.accessor === 'function' ? col.accessor(row) : String(row[col.accessor] || '-')}
+                                        </td>
+                                    ))}
                                 </tr>
-                            )}
-                        </React.Fragment>
-                    ))}
+                                {expandableRender && isExpanded && (
+                                    <tr>
+                                        <td colSpan={columns.length} className="p-0 border-b border-gray-800/50 bg-black/40">
+                                            {expandableRender(row)}
+                                        </td>
+                                    </tr>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
                 </tbody>
             </table>
         </div>

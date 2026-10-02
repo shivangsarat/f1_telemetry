@@ -120,6 +120,8 @@ export const getRaceDetails = async (sessionKey: string) => {
         
         if (sessionInfo.meeting_key) {
             const meetingSessionsRes = await getCached(`meeting_sessions_${sessionInfo.meeting_key}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?meeting_key=${sessionInfo.meeting_key}`));
+            
+            // FIX: Guaranteed chronological sort (Practice 1 -> Practice 2 -> Practice 3 -> Qualifying -> Race)
             availableSessions = (meetingSessionsRes.data || []).sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
             
             const now = Date.now();

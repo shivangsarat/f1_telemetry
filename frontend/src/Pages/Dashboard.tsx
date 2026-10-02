@@ -51,6 +51,7 @@ export const Dashboard = () => {
     
     const [rcExpanded, setRcExpanded] = useState(false);
     const [latestToast, setLatestToast] = useState<any>(null);
+    const [expandedDriver, setExpandedDriver] = useState<number | null>(null);
 
     const { intervals: liveResults, weather: liveWeather, sessionBests: liveBests, isRace: liveIsRace, maxRaceLap: liveMaxLap, raceControl: liveRc, connect } = useRaceStore();
 
@@ -112,7 +113,11 @@ export const Dashboard = () => {
                 return (
                     <div className="flex items-center gap-2">
                         <div className="w-1 h-4 rounded" style={{ backgroundColor: `#${row.team_color}` }}></div>
-                        <Link to={`/race/${sessionKey}/driver/${row.driver_number}`} className={`font-bold hover:underline ${isRetired ? 'text-gray-500' : 'text-blue-400'}`}>
+                        <Link 
+                            to={`/race/${sessionKey}/driver/${row.driver_number}`} 
+                            onClick={(e) => e.stopPropagation()} 
+                            className={`font-bold hover:underline ${isRetired ? 'text-gray-500' : 'text-blue-400'}`}
+                        >
                             {row.name} ({row.driver_number})
                         </Link>
                         {isRetired && <span className="bg-red-900/30 text-red-500 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-widest border border-red-800/50 shadow-sm ml-2">{row.status}</span>}
@@ -138,37 +143,43 @@ export const Dashboard = () => {
             header: isRaceMode ? 'Gap' : 'Gap to P1', 
             accessor: (row: any) => {
                 const isRetired = row.status === 'DNF' || row.status === 'DNS';
-                return <span className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}>{row.gap_to_leader}</span>;
+                return (
+                    <div className="flex items-center justify-between w-full pr-4">
+                        <span className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}>{row.gap_to_leader}</span>
+                        <span className="text-[10px] uppercase tracking-widest text-gray-600 font-bold group-hover:text-blue-400 transition-colors">
+                            Toggle Details
+                        </span>
+                    </div>
+                );
             }
         }
     ];
 
-    // FIX: Perfected Sector Block Alignment using fixed heights and flex-col
     const renderSectorBlock = (sectors: any) => {
         if (!sectors) return null;
         return (
-            <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
+            <div className="flex gap-6 font-mono text-gray-300 text-xs mt-1">
                 <div className="w-20 flex flex-col justify-end">
                     <span className="block text-gray-500 mb-0.5">S1:</span>
-                    <strong className="text-gray-200 text-sm block mb-1">{sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-'}</strong>
+                    <strong className="text-white text-sm block mb-1">{sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-'}</strong>
                     <div className="h-8 flex flex-col justify-start">
-                        {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
+                        {sectors.i1_speed && <span className="text-[10px] text-gray-100 font-bold leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
                     </div>
                     {renderMinisectors(sectors.seg1)}
                 </div>
                 <div className="w-20 flex flex-col justify-end">
                     <span className="block text-gray-500 mb-0.5">S2:</span>
-                    <strong className="text-gray-200 text-sm block mb-1">{sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-'}</strong>
+                    <strong className="text-white text-sm block mb-1">{sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-'}</strong>
                     <div className="h-8 flex flex-col justify-start">
-                        {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
+                        {sectors.i2_speed && <span className="text-[10px] text-gray-100 font-bold leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
                     </div>
                     {renderMinisectors(sectors.seg2)}
                 </div>
                 <div className="w-20 flex flex-col justify-end">
                     <span className="block text-gray-500 mb-0.5">S3:</span>
-                    <strong className="text-gray-200 text-sm block mb-1">{sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-'}</strong>
+                    <strong className="text-white text-sm block mb-1">{sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-'}</strong>
                     <div className="h-8 flex flex-col justify-start">
-                        {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
+                        {sectors.st_speed && <span className="text-[10px] text-purple-300 font-bold leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
                     </div>
                     {renderMinisectors(sectors.seg3)}
                 </div>
@@ -181,7 +192,7 @@ export const Dashboard = () => {
         const displaySectors = isRaceMode ? driver.last_sectors : driver.best_sectors;
 
         return (
-            <div className="p-4 ml-8 border-l-2 border-gray-700 text-xs text-gray-400 flex flex-col gap-4 bg-gray-900/60 rounded-r border-t border-b border-r border-gray-800/50">
+            <div className="p-4 ml-8 border-l-2 border-gray-700 text-xs text-gray-300 flex flex-col gap-4 bg-gray-900/80 rounded-r border-t border-b border-r border-gray-800">
                 <div className="flex flex-wrap items-start gap-12 text-sm">
                     <div className="flex flex-col gap-1">
                         <div>
@@ -230,14 +241,14 @@ export const Dashboard = () => {
                 </div>
                 
                 {driver.pit_stops && driver.pit_stops.length > 0 && (
-                    <div className="flex items-start gap-4 pt-4 border-t border-gray-800/50">
+                    <div className="flex items-start gap-4 pt-4 border-t border-gray-800">
                         <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider mt-1">Pits:</span>
                         <div className="flex flex-wrap gap-2">
                             {driver.pit_stops.map((p: any, i: number) => (
                                 <div key={i} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px]">
-                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Lap {p.lap}</span>
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Lap {p.lap}</span>
                                     {p.stop_duration && <span>Box: <strong className="text-white">{p.stop_duration.toFixed(2)}s</strong></span>}
-                                    {p.lane_duration && <span>Lane: <strong className="text-gray-300">{p.lane_duration.toFixed(2)}s</strong></span>}
+                                    {p.lane_duration && <span>Lane: <strong className="text-gray-200">{p.lane_duration.toFixed(2)}s</strong></span>}
                                     {(!p.stop_duration && !p.lane_duration && p.pit_duration) && <span>Time: <strong className="text-white">{p.pit_duration.toFixed(2)}s</strong></span>}
                                 </div>
                             ))}
@@ -286,30 +297,6 @@ export const Dashboard = () => {
                 <div className="flex justify-between items-center">
                     <div className="flex items-center gap-6">
                         <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
-                        
-                        {!isLive && histData.availableSessions?.length > 0 && (
-                            <div className="flex gap-1 bg-gray-900 p-1 rounded-lg border border-gray-800 shadow-inner">
-                                {histData.availableSessions.map((s: any) => {
-                                    const isFuture = new Date(s.date_start).getTime() > Date.now();
-                                    const isActive = s.session_key === Number(sessionKey);
-                                    
-                                    return (
-                                        <button 
-                                            key={s.session_key} 
-                                            onClick={() => !isFuture && navigate(`/race/${s.session_key}`)}
-                                            disabled={isFuture}
-                                            title={isFuture ? "Session has not started yet" : ""}
-                                            className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition 
-                                                ${isActive ? 'bg-blue-600 text-white shadow' : 
-                                                  isFuture ? 'text-gray-700 cursor-not-allowed opacity-60' : 
-                                                  'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-                                        >
-                                            {s.session_name}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
                     </div>
                     
                     {isRaceMode && activeMaxLap > 0 && (
@@ -322,27 +309,32 @@ export const Dashboard = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-gray-900 rounded-xl p-5 border border-gray-800">
-                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-3 text-xs">Track Weather</h2>
+                    {/* NEW: 7-Metric Expanded Grid Layout for Track Weather */}
+                    <div className="bg-gray-900 rounded-xl p-5 border border-gray-800 flex flex-col justify-center">
+                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4 text-xs">Track Weather</h2>
                         {activeWeather ? (
-                            <div className="flex justify-between text-sm font-mono text-gray-300">
-                                <span>Air: {activeWeather.air_temperature}°C</span>
-                                <span>Track: {activeWeather.track_temperature}°C</span>
-                                <span>Rain: {activeWeather.rainfall ? 'Yes' : 'No'}</span>
+                            <div className="grid grid-cols-4 gap-y-4 gap-x-2 text-xs font-mono text-gray-300">
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Air</span> {activeWeather.air_temperature}°C</div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Track</span> {activeWeather.track_temperature}°C</div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Humidity</span> {activeWeather.humidity}%</div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Rain</span> {activeWeather.rainfall ? 'Yes' : 'No'}</div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Pressure</span> {activeWeather.pressure} mbar</div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Wind Dir</span> {activeWeather.wind_direction}°</div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Wind Spd</span> {activeWeather.wind_speed} m/s</div>
                             </div>
                         ) : <span className="text-gray-500 text-sm">Loading weather...</span>}
                     </div>
 
-                    <div className="bg-gray-900 rounded-xl p-5 border border-purple-900/50 shadow-[0_0_15px_rgba(168,85,247,0.1)]">
-                        <h2 className="font-bold uppercase tracking-wider text-purple-400 mb-3 text-xs flex items-center gap-2">
+                    <div className="bg-gray-900 rounded-xl p-5 border border-purple-900/50 shadow-[0_0_15px_rgba(168,85,247,0.1)] flex flex-col justify-center">
+                        <h2 className="font-bold uppercase tracking-wider text-purple-400 mb-4 text-xs flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span> Session Bests
                         </h2>
                         {activeBests ? (
                             <div className="flex justify-between text-xs font-mono text-gray-300">
-                                <div><span className="text-gray-500 block">Fastest Lap</span> {activeBests.lap.time} <span className="text-purple-400">({activeBests.lap.driver})</span></div>
-                                <div><span className="text-gray-500 block">Sector 1</span> {activeBests.s1.time}s <span className="text-purple-400">({activeBests.s1.driver})</span></div>
-                                <div><span className="text-gray-500 block">Sector 2</span> {activeBests.s2.time}s <span className="text-purple-400">({activeBests.s2.driver})</span></div>
-                                <div><span className="text-gray-500 block">Sector 3</span> {activeBests.s3.time}s <span className="text-purple-400">({activeBests.s3.driver})</span></div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Fastest Lap</span> {activeBests.lap.time} <span className="text-purple-400">({activeBests.lap.driver})</span></div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Sector 1</span> {activeBests.s1.time}s <span className="text-purple-400">({activeBests.s1.driver})</span></div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Sector 2</span> {activeBests.s2.time}s <span className="text-purple-400">({activeBests.s2.driver})</span></div>
+                                <div><span className="text-gray-500 block text-[10px] uppercase">Sector 3</span> {activeBests.s3.time}s <span className="text-purple-400">({activeBests.s3.driver})</span></div>
                             </div>
                         ) : <span className="text-gray-500 text-sm">Calculating bests...</span>}
                     </div>
@@ -353,7 +345,12 @@ export const Dashboard = () => {
                         {histData.loading ? (
                             <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
                         ) : (
-                            <Table data={activeResults || []} columns={driverColumns} expandableRender={renderPitSubRow} />
+                            <Table 
+                                data={activeResults || []} 
+                                columns={driverColumns} 
+                                expandableRender={renderPitSubRow}
+                                getRowKey={(row: any) => row.driver_number}
+                            />
                         )}
                     </div>
                 </div>
