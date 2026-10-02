@@ -5,6 +5,7 @@ import { processTelemetry } from './telemetryProcessor';
 const cache = new Map<string, { data: any, expires: number }>();
 const pendingRequests = new Map<string, Promise<any>>();
 let globalRequestQueue = Promise.resolve();
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
@@ -50,6 +51,7 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
 
 const formatGap = (gap: any) => {
     if (gap === null || gap === undefined || gap === '') return 'Leader';
+    if (typeof gap === 'string' && gap.toUpperCase().includes('LAP')) return gap;
     const num = Number(gap);
     return (isNaN(num) || num === 0) ? 'Leader' : `+${num.toFixed(3)}s`;
 };
@@ -70,12 +72,23 @@ export const getHomeData = async () => {
         getCached('live_status', 30000, () => axios.get(`${OPENF1_BASE}/sessions?session_key=latest`))
     ]);
 
-    const drivers = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings?.map((d: any) => ({
-        position: d.position, name: `${d.Driver.givenName} ${d.Driver.familyName}`, team: d.Constructors[0]?.name, points: d.points
-    })) || [];
-    const teams = teamsRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.ConstructorStandings?.map((t: any) => ({
-        position: t.position, name: t.Constructor.name, points: t.points
-    })) || [];
+    const driversData = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings || [];
+    const drivers = driversData.map((d: any, idx: number) => ({
+        position: d.position, 
+        name: `${d.Driver.givenName} ${d.Driver.familyName}`, 
+        team: d.Constructors[0]?.name, 
+        points: d.points,
+        diff_to_next: idx === 0 ? '-' : `-${Number(driversData[idx-1].points) - Number(d.points)}`
+    }));
+
+    const teamsData = teamsRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.ConstructorStandings || [];
+    const teams = teamsData.map((t: any, idx: number) => ({
+        position: t.position, 
+        name: t.Constructor.name, 
+        points: t.points,
+        diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
+    }));
+
     const races = (meetingsRes?.data || []).map((m: any) => {
         const race = sessionsRes?.data?.find((s: any) => s.meeting_key === m.meeting_key);
         return race ? { round: m.meeting_name, location: m.location, date: m.date_start, session_key: race.session_key } : null;
@@ -97,8 +110,33 @@ export const getHomeData = async () => {
 
 export const getRaceDetails = async (sessionKey: string) => {
     const ttl = sessionKey === 'latest' ? 5000 : 86400000; 
+    let availableSessions: any[] = [];
+    let sessionName = 'Live Session';
     
-    const sInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
+    if (sessionKey !== 'latest') {
+        const sInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
+        const sessionInfo = sInfoRes.data[0] || {};
+        sessionName = sessionInfo.session_name || 'Session';
+        
+        if (sessionInfo.meeting_key) {
+            const meetingSessionsRes = await getCached(`meeting_sessions_${sessionInfo.meeting_key}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?meeting_key=${sessionInfo.meeting_key}`));
+            availableSessions = (meetingSessionsRes.data || []).sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
+            
+            const now = Date.now();
+            if (new Date(sessionInfo.date_start).getTime() > now) {
+                const pastSessions = availableSessions.filter((s: any) => new Date(s.date_start).getTime() <= now);
+                if (pastSessions.length > 0) {
+                    return { active_session_key: String(pastSessions[pastSessions.length - 1].session_key) };
+                }
+            }
+        }
+    }
+
+    const activeSessionInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
+    const activeSessionInfo = activeSessionInfoRes.data[0] || {};
+    const isRace = activeSessionInfo.session_type?.includes('Race') || activeSessionInfo.session_type?.includes('Sprint');
+    sessionName = activeSessionInfo.session_name || sessionName;
+
     const wRes = await getCached(`weather_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/weather?session_key=${sessionKey}`));
     const iRes = await getCached(`intervals_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/intervals?session_key=${sessionKey}`));
     const posRes = await getCached(`positions_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/position?session_key=${sessionKey}`));
@@ -107,8 +145,6 @@ export const getRaceDetails = async (sessionKey: string) => {
     const lRes = await getCached(`laps_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/laps?session_key=${sessionKey}`));
     const sRes = await getCached(`stints_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/stints?session_key=${sessionKey}`));
 
-    const sessionInfo = sInfoRes.data[0] || {};
-    const isRace = sessionInfo.session_type?.includes('Race') || sessionInfo.session_type?.includes('Sprint');
     const weather = wRes.data[wRes.data.length - 1] || null;
     
     const lapsFromLaps = Math.max(...(lRes.data || []).map((l: any) => l.lap_number || 0), 0);
@@ -150,19 +186,25 @@ export const getRaceDetails = async (sessionKey: string) => {
     let results = driverList.map((row: any) => {
         const dNum = Number(row.driver_number);
         const driver = dRes.data.find((d: any) => Number(d.driver_number) === dNum) || {};
-        const dLaps = lRes.data.filter((l: any) => Number(l.driver_number) === dNum && typeof l.lap_duration === 'number' && l.lap_duration > 0);
+        
+        const dLapsAll = lRes.data.filter((l: any) => Number(l.driver_number) === dNum);
+        const dLapsCompleted = dLapsAll.filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
+        
         const dPits = pRes.data.filter((p: any) => Number(p.driver_number) === dNum);
         const dStints = sRes.data.filter((s: any) => Number(s.driver_number) === dNum).sort((a: any, b: any) => a.lap_start - b.lap_start);
         
-        const bestLap = dLaps.reduce((min: number, lap: any) => lap.lap_duration < min ? lap.lap_duration : min, Infinity);
-        const lastLapData = dLaps.length > 0 ? dLaps[dLaps.length - 1] : null;
-        const driverMaxLap = dLaps.length > 0 ? Math.max(...dLaps.map((l: any) => l.lap_number)) : 0;
+        const bestLapData = dLapsCompleted.length > 0 ? dLapsCompleted.reduce((prev: any, current: any) => (prev.lap_duration < current.lap_duration) ? prev : current) : null;
+        const bestLap = bestLapData ? bestLapData.lap_duration : Infinity;
+        
+        const lastLapData = dLapsAll.length > 0 ? dLapsAll[dLapsAll.length - 1] : null;
+        const driverMaxLapCompleted = dLapsCompleted.length > 0 ? Math.max(...dLapsCompleted.map((l: any) => l.lap_number)) : 0;
+        const driverMaxLapStarted = dLapsAll.length > 0 ? Math.max(...dLapsAll.map((l: any) => l.lap_number)) : 0;
 
         const stints = dStints.map((s: any) => ({
             compound: s.compound || 'UNKNOWN',
             start: s.lap_start,
-            end: s.lap_end || driverMaxLap,
-            length: Math.max((s.lap_end || driverMaxLap) - s.lap_start, 1)
+            end: s.lap_end || driverMaxLapStarted,
+            length: Math.max((s.lap_end || driverMaxLapStarted) - s.lap_start, 1)
         }));
 
         const officialPosition = latestPositions[dNum]?.position || 99;
@@ -170,8 +212,8 @@ export const getRaceDetails = async (sessionKey: string) => {
         const posChange = startingPosition - officialPosition;
 
         let leaderTotalTime = '-';
-        if (isRace && officialPosition === 1 && dLaps.length > 0) {
-            const totalSeconds = dLaps.reduce((sum: number, lap: any) => sum + lap.lap_duration, 0);
+        if (isRace && officialPosition === 1 && dLapsCompleted.length > 0) {
+            const totalSeconds = dLapsCompleted.reduce((sum: number, lap: any) => sum + lap.lap_duration, 0);
             const h = Math.floor(totalSeconds / 3600);
             const m = Math.floor((totalSeconds % 3600) / 60);
             const s = (totalSeconds % 60).toFixed(3);
@@ -181,8 +223,8 @@ export const getRaceDetails = async (sessionKey: string) => {
         const isLapped = String(row.gap_to_leader).toUpperCase().includes('LAP') || String(row.interval).toUpperCase().includes('LAP');
         let status = 'Active';
         if (isRace) {
-            if (driverMaxLap === 0 && maxRaceLap > 1) status = 'DNS';
-            else if (maxRaceLap > 5 && (maxRaceLap - driverMaxLap) > 4 && !isLapped) status = 'DNF';
+            if (driverMaxLapCompleted === 0 && maxRaceLap > 1) status = 'DNS';
+            else if (maxRaceLap > 5 && (maxRaceLap - driverMaxLapCompleted) > 4 && !isLapped) status = 'DNF';
         }
 
         return {
@@ -191,16 +233,27 @@ export const getRaceDetails = async (sessionKey: string) => {
             team_color: driver.team_colour || 'ffffff',
             interval: isRace ? (officialPosition === 1 ? leaderTotalTime : formatGap(row.interval)) : '-',
             gap_to_leader: isRace ? formatGap(row.gap_to_leader) : '-',
-            pit_stops: dPits.map((p: any) => ({ lap: p.lap_number, duration: p.pit_duration })),
+            pit_stops: dPits.map((p: any) => ({ 
+                lap: p.lap_number, 
+                pit_duration: p.pit_duration,
+                lane_duration: p.lane_duration || p.pit_duration, 
+                stop_duration: p.stop_duration || null
+            })),
             best_lap_raw: bestLap,
             best_lap: formatLapTime(bestLap),
+            best_sectors: bestLapData ? {
+                s1: bestLapData.duration_sector_1, s2: bestLapData.duration_sector_2, s3: bestLapData.duration_sector_3,
+                i1_speed: bestLapData.i1_speed, i2_speed: bestLapData.i2_speed, st_speed: bestLapData.st_speed,
+                seg1: bestLapData.segments_sector_1 || [], seg2: bestLapData.segments_sector_2 || [], seg3: bestLapData.segments_sector_3 || []
+            } : null,
             last_lap: lastLapData ? formatLapTime(lastLapData.lap_duration) : '-',
             last_sectors: lastLapData ? { 
                 s1: lastLapData.duration_sector_1, s2: lastLapData.duration_sector_2, s3: lastLapData.duration_sector_3,
+                i1_speed: lastLapData.i1_speed, i2_speed: lastLapData.i2_speed, st_speed: lastLapData.st_speed,
                 seg1: lastLapData.segments_sector_1 || [], seg2: lastLapData.segments_sector_2 || [], seg3: lastLapData.segments_sector_3 || []
             } : null,
             stints, total_laps: maxRaceLap, official_position: officialPosition, pos_change: posChange, status,
-            driver_laps: driverMaxLap // <-- Added individual lap tracking
+            driver_laps: driverMaxLapCompleted
         };
     });
 
@@ -221,8 +274,7 @@ export const getRaceDetails = async (sessionKey: string) => {
         });
     }
     
-    // Pass maxRaceLap up to the root level
-    return { weather, sessionBests: formattedBests, isRace, maxRaceLap, results };
+    return { weather, sessionBests: formattedBests, isRace, maxRaceLap, availableSessions, sessionName, results };
 };
 
 export const getRaceControl = async (sessionKey: string) => {

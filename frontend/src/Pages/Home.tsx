@@ -16,20 +16,46 @@ export const Home = () => {
         { header: 'Pos', accessor: 'position' },
         { header: 'Driver', accessor: 'name' },
         { header: 'Team', accessor: 'team' },
-        { header: 'Points', accessor: 'points' }
+        { header: 'Points', accessor: 'points' },
+        { 
+            header: 'To Next', 
+            accessor: (row: any) => (
+                <span className={`font-mono ${row.diff_to_next === '-' ? 'text-gray-500' : 'text-red-400'}`}>
+                    {row.diff_to_next}
+                </span>
+            ) 
+        }
     ];
 
     const teamColumns = [
         { header: 'Pos', accessor: 'position' },
         { header: 'Team', accessor: 'name' },
-        { header: 'Points', accessor: 'points' }
+        { header: 'Points', accessor: 'points' },
+        { 
+            header: 'To Next', 
+            accessor: (row: any) => (
+                <span className={`font-mono ${row.diff_to_next === '-' ? 'text-gray-500' : 'text-red-400'}`}>
+                    {row.diff_to_next}
+                </span>
+            ) 
+        }
     ];
 
-    const raceColumns = [
+    const pastRaceColumns = [
+        { 
+            header: 'Round', 
+            accessor: (row: any) => (
+                <Link to={`/race/${row.session_key}`} className="text-blue-400 hover:text-blue-300 hover:underline font-bold transition">
+                    {row.round}
+                </Link>
+            ) 
+        },
+        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString() }
+    ];
+
+    const upcomingRaceColumns = [
         { header: 'Round', accessor: 'round' },
-        { header: 'Location', accessor: 'location' },
-        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString() },
-        { header: 'Data', accessor: (row: any) => <Link to={`/race/${row.session_key}`} className="text-blue-400 hover:underline">View Data</Link> }
+        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString() }
     ];
 
     if (!data) return <div className="p-10 text-white animate-pulse">Loading Dashboard...</div>;
@@ -50,21 +76,44 @@ export const Home = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 h-[800px] overflow-y-auto custom-scrollbar">
-                    <h2 className="font-bold uppercase text-gray-400 mb-4">Driver Standings</h2>
-                    <Table data={data.drivers} columns={driverColumns} />
+                {/* 
+                    FIX: Changed wrapper to flex-col and moved overflow to an inner div. 
+                    This ensures the padding is NOT part of the scroll area, preventing the transparent gap above the sticky header.
+                */}
+                <div className="bg-gray-900 rounded-xl border border-gray-800 h-[800px] flex flex-col overflow-hidden shadow-xl">
+                    <div className="p-5 pb-0">
+                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Driver Standings</h2>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
+                        <Table data={data.drivers} columns={driverColumns} />
+                    </div>
                 </div>
-                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 h-[800px] overflow-y-auto custom-scrollbar">
-                    <h2 className="font-bold uppercase text-gray-400 mb-4">Constructor Standings</h2>
-                    <Table data={data.teams} columns={teamColumns} />
+
+                <div className="bg-gray-900 rounded-xl border border-gray-800 h-[800px] flex flex-col overflow-hidden shadow-xl">
+                    <div className="p-5 pb-0">
+                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Constructor Standings</h2>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
+                        <Table data={data.teams} columns={teamColumns} />
+                    </div>
                 </div>
-                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 h-[800px] overflow-y-auto custom-scrollbar">
-                    <h2 className="font-bold uppercase text-gray-400 mb-4">Past Races</h2>
-                    <Table data={data.pastRaces} columns={raceColumns} />
+
+                <div className="bg-gray-900 rounded-xl border border-gray-800 h-[800px] flex flex-col overflow-hidden shadow-xl">
+                    <div className="p-5 pb-0">
+                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Past Races</h2>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
+                        <Table data={data.pastRaces} columns={pastRaceColumns} />
+                    </div>
                 </div>
-                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 h-[800px] overflow-y-auto custom-scrollbar">
-                    <h2 className="font-bold uppercase text-gray-400 mb-4">Upcoming Races</h2>
-                    <Table data={data.upcomingRaces} columns={raceColumns.slice(0, 3)} />
+
+                <div className="bg-gray-900 rounded-xl border border-gray-800 h-[800px] flex flex-col overflow-hidden shadow-xl">
+                    <div className="p-5 pb-0">
+                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Upcoming Races</h2>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
+                        <Table data={data.upcomingRaces} columns={upcomingRaceColumns} />
+                    </div>
                 </div>
             </div>
         </div>

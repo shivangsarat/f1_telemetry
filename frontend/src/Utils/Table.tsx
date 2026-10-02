@@ -18,12 +18,15 @@ export function Table<T>({ data, columns, expandableRender }: TableProps<T>) {
 
     return (
         <div className="w-full relative">
-            <table className="w-full border-collapse text-sm text-left">
-                {/* Floating Header */}
-                <thead className="sticky top-0 z-50 bg-gray-900 text-gray-400 shadow-md ring-1 ring-gray-800">
+            {/* border-separate prevents sticky header rendering bugs in modern browsers */}
+            <table className="w-full border-separate border-spacing-0 text-sm text-left">
+                <thead>
                     <tr>
                         {columns.map((col, idx) => (
-                            <th key={idx} className="p-4 bg-gray-900 font-bold uppercase tracking-wider text-xs border-b border-gray-700">
+                            <th 
+                                key={idx} 
+                                className="sticky top-0 z-50 p-4 bg-gray-900 font-bold uppercase tracking-wider text-xs border-b border-gray-700 shadow-sm"
+                            >
                                 {col.header}
                             </th>
                         ))}

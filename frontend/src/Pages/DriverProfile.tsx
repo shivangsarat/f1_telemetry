@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useLayoutEffect } from 'react';
+import { useEffect, useRef, useState, useLayoutEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
@@ -31,6 +31,46 @@ const renderMinisectors = (segments: number[]) => {
     );
 };
 
+const formatLapTime = (seconds: number | null) => {
+    if (!seconds || isNaN(seconds) || seconds === Infinity) return '-';
+    const m = Math.floor(seconds / 60);
+    const s = (seconds % 60).toFixed(3);
+    return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
+};
+
+// Reusable fix for perfectly aligned sector blocks
+const renderSectorBlock = (sectors: any) => {
+    if (!sectors) return null;
+    return (
+        <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
+            <div className="w-20 flex flex-col justify-end">
+                <span className="block text-gray-500 mb-0.5">S1:</span>
+                <strong className="text-gray-200 text-sm block mb-1">{sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-'}</strong>
+                <div className="h-8 flex flex-col justify-start">
+                    {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
+                </div>
+                {renderMinisectors(sectors.seg1)}
+            </div>
+            <div className="w-20 flex flex-col justify-end">
+                <span className="block text-gray-500 mb-0.5">S2:</span>
+                <strong className="text-gray-200 text-sm block mb-1">{sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-'}</strong>
+                <div className="h-8 flex flex-col justify-start">
+                    {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
+                </div>
+                {renderMinisectors(sectors.seg2)}
+            </div>
+            <div className="w-20 flex flex-col justify-end">
+                <span className="block text-gray-500 mb-0.5">S3:</span>
+                <strong className="text-gray-200 text-sm block mb-1">{sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-'}</strong>
+                <div className="h-8 flex flex-col justify-start">
+                    {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
+                </div>
+                {renderMinisectors(sectors.seg3)}
+            </div>
+        </div>
+    );
+};
+
 export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
@@ -53,6 +93,60 @@ export const DriverProfile = () => {
     const plotInstance1 = useRef<uPlot | null>(null);
     const plotInstance2 = useRef<uPlot | null>(null);
 
+    const lapXRef1 = useRef<HTMLSpanElement>(null);
+    const speedRef = useRef<HTMLSpanElement>(null);
+    const rpmRef = useRef<HTMLSpanElement>(null);
+    const lapXRef2 = useRef<HTMLSpanElement>(null);
+    const throttleRef = useRef<HTMLSpanElement>(null);
+    const brakeRef = useRef<HTMLSpanElement>(null);
+    const gearRef = useRef<HTMLSpanElement>(null);
+
+    const processedData = (isLive ? liveData : histPayload).telemetry;
+    const processedDataRef = useRef(processedData);
+    useEffect(() => { processedDataRef.current = processedData; }, [processedData]);
+
+    useLayoutEffect(() => {
+        if (!chartRef1.current || !chartRef2.current) return;
+        const width = chartRef1.current.clientWidth || 800;
+
+        const syncLegendHook = (u: uPlot) => {
+            const idx = u.cursor.idx;
+            if (idx != null && processedDataRef.current[idx]) {
+                const d = processedDataRef.current[idx];
+                if (lapXRef1.current) lapXRef1.current.textContent = d.lapX.toFixed(3);
+                if (speedRef.current) speedRef.current.textContent = d.speed.toString();
+                if (rpmRef.current) rpmRef.current.textContent = d.rpm.toString();
+                
+                if (lapXRef2.current) lapXRef2.current.textContent = d.lapX.toFixed(3);
+                if (throttleRef.current) throttleRef.current.textContent = d.throttle.toString();
+                if (brakeRef.current) brakeRef.current.textContent = d.brake.toString();
+                if (gearRef.current) gearRef.current.textContent = d.gear.toString();
+            }
+        };
+
+        plotInstance1.current = new uPlot({
+            width, height: 300,
+            legend: { show: false },
+            cursor: { x: true, y: false, sync: { key: 'telemetry' } },
+            axes: [{ stroke: "#ccc" }, { stroke: "#00ff00", scale: "speed" }, { side: 1, stroke: "#ff00ff", grid: { show: false }, scale: "rpm" }],
+            series: [{}, { label: "Speed", stroke: "#00ff00", scale: "speed" }, { label: "RPM", stroke: "#ff00ff", scale: "rpm" }],
+            scales: { x: { time: false, auto: false }, speed: { auto: true }, rpm: { auto: true } },
+            hooks: { setCursor: [syncLegendHook] }
+        }, [[], [], []], chartRef1.current);
+
+        plotInstance2.current = new uPlot({
+            width, height: 250,
+            legend: { show: false },
+            cursor: { x: true, y: false, sync: { key: 'telemetry' } },
+            axes: [{ stroke: "#ccc" }, { stroke: "#00aaff", scale: "pct" }, { side: 1, stroke: "#ffaa00", grid: { show: false }, scale: "gear" }],
+            series: [{}, { label: "Throttle", stroke: "#00aaff", scale: "pct" }, { label: "Brake", stroke: "#ff3333", scale: "pct" }, { label: "Gear", stroke: "#ffaa00", scale: "gear" }],
+            scales: { x: { time: false, auto: false }, pct: { min: 0, max: 105 }, gear: { min: 0, max: 9 } },
+            hooks: { setCursor: [syncLegendHook] }
+        }, [[], [], [], []], chartRef2.current);
+
+        return () => { plotInstance1.current?.destroy(); plotInstance2.current?.destroy(); };
+    }, []);
+
     useEffect(() => {
         setHistPayload({ telemetry: [], laps: [], stints: [] });
         setManualMin(0);
@@ -71,40 +165,26 @@ export const DriverProfile = () => {
         }
     }, [isLive, sessionKey, driverNumber]);
 
-    const activeData = isLive ? liveData : histPayload;
-    const processedData = activeData.telemetry;
-
-    useLayoutEffect(() => {
-        if (!chartRef1.current || !chartRef2.current) return;
-        const width = chartRef1.current.clientWidth || 800;
-
-        plotInstance1.current = new uPlot({
-            width: width, height: 300,
-            axes: [{ stroke: "#ccc" }, { stroke: "#00ff00", scale: "speed" }, { side: 1, stroke: "#ff00ff", grid: { show: false }, scale: "rpm" }],
-            series: [{}, { label: "Speed", stroke: "#00ff00", scale: "speed" }, { label: "RPM", stroke: "#ff00ff", scale: "rpm" }],
-            scales: { x: { time: false, auto: false }, speed: { auto: true }, rpm: { auto: true } } 
-        }, [[], [], []], chartRef1.current);
-
-        plotInstance2.current = new uPlot({
-            width: width, height: 250,
-            axes: [{ stroke: "#ccc" }, { stroke: "#00aaff", scale: "pct" }, { side: 1, stroke: "#ffaa00", grid: { show: false }, scale: "gear" }],
-            series: [{}, { label: "Throttle", stroke: "#00aaff", scale: "pct" }, { label: "Brake", stroke: "#ff3333", scale: "pct" }, { label: "Gear", stroke: "#ffaa00", scale: "gear" }],
-            scales: { x: { time: false, auto: false }, pct: { min: 0, max: 105 }, gear: { min: 0, max: 9 } }
-        }, [[], [], [], []], chartRef2.current);
-
-        return () => { plotInstance1.current?.destroy(); plotInstance2.current?.destroy(); };
-    }, []);
-
     useEffect(() => {
         if (processedData.length > 0) {
-            const xLaps = processedData.map(d => d.lapX);
+            const xLaps = processedData.map((d: any) => d.lapX);
             setMaxLapX(xLaps[xLaps.length - 1]); 
             if (!isLive && manualMin === 0) setManualMin(Math.floor(xLaps[0]));
             
-            plotInstance1.current?.setData([xLaps, processedData.map(d => d.speed), processedData.map(d => d.rpm)]);
-            plotInstance2.current?.setData([xLaps, processedData.map(d => d.throttle), processedData.map(d => d.brake), processedData.map(d => d.gear)]);
+            plotInstance1.current?.setData([xLaps, processedData.map((d: any) => d.speed), processedData.map((d: any) => d.rpm)]);
+            plotInstance2.current?.setData([xLaps, processedData.map((d: any) => d.throttle), processedData.map((d: any) => d.brake), processedData.map((d: any) => d.gear)]);
         }
     }, [processedData, isLive, manualMin]);
+
+    const snapToPlayhead = useCallback(() => {
+        if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
+        const playheadX = isAutoScroll ? maxLapX : currentSliderVal + (VIEWPORT_LAPS * 0.75);
+        const targetX = Math.min(playheadX, maxLapX);
+        const leftPx = plotInstance1.current.valToPos(targetX, 'x');
+        
+        plotInstance1.current.setCursor({ left: leftPx, top: -10 });
+        plotInstance2.current.setCursor({ left: leftPx, top: -10 });
+    }, [isAutoScroll, maxLapX, manualMin]); 
 
     useEffect(() => {
         let min = manualMin;
@@ -120,24 +200,61 @@ export const DriverProfile = () => {
         }
         plotInstance1.current?.setScale('x', { min, max });
         plotInstance2.current?.setScale('x', { min, max });
-    }, [maxLapX, isAutoScroll, manualMin]);
+
+        snapToPlayhead();
+    }, [maxLapX, isAutoScroll, manualMin, snapToPlayhead]);
 
     const maxAllowedScroll = Math.max(0, maxLapX + (VIEWPORT_LAPS * 0.25) - VIEWPORT_LAPS);
     const currentSliderVal = isAutoScroll ? maxAllowedScroll : manualMin;
 
-    // --- Dynamic Lap Matching Logic ---
-    // Finds the lap data associated with the current timeline slider position
+    const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
+    
+    // Detailed Lap Math
     const activeLapData = activeData.laps?.find((l: any) => l.lap_number === activeLapNumber) || null;
     const activeStint = activeData.stints?.find((s: any) => s.lap_start <= activeLapNumber && (s.lap_end >= activeLapNumber || s.lap_end === 0)) || null;
 
+    // Latest Live Cockpit Data
+    const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
+    const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
+    const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
+    const bestLapObj = completedLaps.length > 0 ? completedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, completedLaps[0]) : null;
+
+    const isLiveTracking = isAutoScroll && isLive;
+
     return (
         <div className="p-6 bg-black text-white min-h-screen flex flex-col gap-6">
+            
+            <style>{`
+                .live-playhead .uplot .u-cursor-x {
+                    width: 0px !important;
+                    border-left: 2px solid #22c55e !important;
+                    box-shadow: 0 0 10px rgba(34, 197, 94, 0.6) !important;
+                }
+                .live-playhead .uplot .u-cursor-x::after {
+                    background-color: #22c55e;
+                    box-shadow: 0 0 10px #22c55e;
+                }
+                .hist-playhead .uplot .u-cursor-x {
+                    width: 0px !important;
+                    border-left: 2px solid #3b82f6 !important;
+                    box-shadow: 0 0 10px rgba(59, 130, 246, 0.6) !important;
+                }
+                .hist-playhead .uplot .u-cursor-x::after {
+                    background-color: #3b82f6;
+                    box-shadow: 0 0 10px #3b82f6;
+                }
+                .uplot .u-cursor-x::after {
+                    content: ''; position: absolute; top: 0px; left: -5px; width: 8px; height: 8px; border-radius: 50%;
+                }
+                .uplot .u-cursor-y { display: none !important; }
+            `}</style>
+
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-6">
                     <h1 className="text-3xl font-bold">Driver {driverNumber} Telemetry</h1>
                     {!isAutoScroll && (
-                        <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition">
+                        <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
                             Resume Auto-Scroll →
                         </button>
                     )}
@@ -147,30 +264,106 @@ export const DriverProfile = () => {
                 </Link>
             </div>
             
-            <div className="flex flex-col gap-6 relative">
+            <div className={`flex flex-col gap-6 relative ${isLiveTracking ? 'live-playhead' : 'hist-playhead'}`}>
                 {loading && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800">
                         <span className="text-gray-300 font-bold uppercase tracking-widest animate-pulse">Processing Backend Telemetry...</span>
                     </div>
                 )}
 
-                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 relative">
+                {/* NEW: Live Cockpit UI */}
+                {isLive && latestTelemetry && (
+                    <div className="bg-gray-900 p-5 rounded-xl border border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.05)] flex flex-col gap-4">
+                        <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                            <h2 className="font-bold uppercase tracking-wider text-green-400 text-xs flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Live Cockpit Data
+                            </h2>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            
+                            <div className="flex flex-col gap-2 border-r border-gray-800 pr-4 justify-center">
+                                <div className="flex justify-between items-end">
+                                    <span className="text-gray-400 text-xs uppercase tracking-widest font-bold">Current Lap (L{currentLiveLapObj?.lap_number || '-'})</span>
+                                </div>
+                                <div className="flex gap-6 font-mono text-xs">
+                                    <div><span className="text-gray-500">S1:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_1 ? currentLiveLapObj.duration_sector_1.toFixed(3) : '-'}</span></div>
+                                    <div><span className="text-gray-500">S2:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_2 ? currentLiveLapObj.duration_sector_2.toFixed(3) : '-'}</span></div>
+                                    <div><span className="text-gray-500">S3:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_3 ? currentLiveLapObj.duration_sector_3.toFixed(3) : '-'}</span></div>
+                                </div>
+                                <div className="mt-2 pt-3 border-t border-gray-800/50">
+                                    <span className="text-purple-400 text-[10px] font-bold uppercase tracking-widest block mb-1">Personal Best (L{bestLapObj?.lap_number || '-'})</span>
+                                    <span className="font-mono text-white text-lg font-bold">{bestLapObj ? formatLapTime(bestLapObj.lap_duration) : '-'}</span>
+                                </div>
+                            </div>
+                            
+                            <div className="flex flex-col gap-4 justify-center border-r border-gray-800 pr-4">
+                                <div className="flex items-end gap-2">
+                                    <span className="text-5xl font-black font-mono text-green-400 leading-none">{latestTelemetry.speed}</span>
+                                    <span className="text-gray-500 text-sm font-bold uppercase pb-1 tracking-widest">km/h</span>
+                                </div>
+                                <div className="flex items-end gap-2">
+                                    <span className="text-3xl font-black font-mono text-purple-400 leading-none">{latestTelemetry.rpm}</span>
+                                    <span className="text-gray-500 text-xs font-bold uppercase pb-0.5 tracking-widest">rpm</span>
+                                </div>
+                            </div>
+                            
+                            <div className="flex flex-col gap-4 justify-center">
+                                <div className="flex items-center gap-3">
+                                    <span className="w-16 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Throttle</span>
+                                    <div className="flex-1 bg-gray-800 h-2.5 rounded-full overflow-hidden">
+                                        <div className="bg-blue-500 h-full transition-all duration-300" style={{width: `${latestTelemetry.throttle}%`}}></div>
+                                    </div>
+                                    <span className="w-10 text-right font-mono text-xs text-white">{latestTelemetry.throttle}%</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <span className="w-16 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Brake</span>
+                                    <div className="flex-1 bg-gray-800 h-2.5 rounded-full overflow-hidden">
+                                        <div className="bg-red-500 h-full transition-all duration-300" style={{width: `${latestTelemetry.brake}%`}}></div>
+                                    </div>
+                                    <span className="w-10 text-right font-mono text-xs text-white">{latestTelemetry.brake}%</span>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1">
+                                    <span className="w-16 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Gear</span>
+                                    <div className="flex gap-1">
+                                        {[1,2,3,4,5,6,7,8].map(g => (
+                                            <div key={g} className={`w-5 h-6 flex items-center justify-center rounded-sm text-xs font-bold ${latestTelemetry.gear === g ? 'bg-yellow-500 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-600'}`}>
+                                                {g}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 relative" onMouseLeave={snapToPlayhead}>
                     <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4 flex justify-between">
-                        <span>Speed & Engine RPM</span>
-                        {isAutoScroll && isLive && <span className="text-green-500 animate-pulse font-bold">● LIVE</span>}
+                        <span>Timeline: Speed & Engine RPM</span>
+                        {isLiveTracking && <span className="text-green-500 animate-pulse font-bold tracking-widest">● LIVE SYNC</span>}
                     </h2>
                     <div ref={chartRef1} className="w-full min-h-[300px]"></div>
+                    
+                    <div className="text-center text-xs font-mono text-gray-400 mt-2">
+                        Timeline Pos: <span ref={lapXRef1} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#00ff00]">■</span> Speed: <span ref={speedRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#ff00ff]">■</span> RPM: <span ref={rpmRef} className="text-white font-bold">--</span>
+                    </div>
                 </div>
                 
-                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800">
-                    <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Driver Inputs & Gear</h2>
+                <div className="bg-gray-900 p-5 rounded-xl border border-gray-800" onMouseLeave={snapToPlayhead}>
+                    <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Timeline: Driver Inputs & Gear</h2>
                     <div ref={chartRef2} className="w-full min-h-[250px]"></div>
+                    
+                    <div className="text-center text-xs font-mono text-gray-400 mt-2">
+                        Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">--</span>
+                    </div>
                 </div>
 
-                {/* --- Timeline & Dynamic Lap Summary --- */}
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 flex flex-col gap-6">
-                    
-                    {/* Slider */}
                     <div className="flex items-center gap-4">
                         <span className="text-xs text-gray-500 uppercase font-bold w-20">Timeline</span>
                         <input 
@@ -180,12 +373,11 @@ export const DriverProfile = () => {
                                 setManualMin(val);
                                 setIsAutoScroll(val >= maxAllowedScroll - 0.2);
                             }}
-                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            className={`w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer ${isLiveTracking ? 'accent-green-500' : 'accent-blue-500'}`}
                         />
-                        <span className="text-xs text-gray-400 w-24 text-right">Lap {currentSliderVal.toFixed(1)}</span>
+                        <span className="text-xs text-gray-400 w-24 text-right font-bold">Lap {currentSliderVal.toFixed(1)}</span>
                     </div>
 
-                    {/* Dynamic Lap Stats Panel */}
                     <div className="flex flex-wrap items-center justify-between border-t border-gray-800 pt-4 px-4 bg-gray-800/20 rounded-lg mt-2">
                         <div className="flex items-center gap-4">
                             <span className="text-sm font-bold text-gray-400">LAP {activeLapNumber} INFO</span>
@@ -197,26 +389,10 @@ export const DriverProfile = () => {
                             )}
                         </div>
 
-                        {activeLapData ? (
-                            <div className="flex gap-8 font-mono text-gray-400 text-xs">
-                                <div className="w-20">
-                                    <span>S1: <strong className="text-gray-200">{activeLapData.duration_sector_1 ? `${activeLapData.duration_sector_1.toFixed(3)}s` : '-'}</strong></span>
-                                    {renderMinisectors(activeLapData.segments_sector_1)}
-                                </div>
-                                <div className="w-20">
-                                    <span>S2: <strong className="text-gray-200">{activeLapData.duration_sector_2 ? `${activeLapData.duration_sector_2.toFixed(3)}s` : '-'}</strong></span>
-                                    {renderMinisectors(activeLapData.segments_sector_2)}
-                                </div>
-                                <div className="w-20">
-                                    <span>S3: <strong className="text-gray-200">{activeLapData.duration_sector_3 ? `${activeLapData.duration_sector_3.toFixed(3)}s` : '-'}</strong></span>
-                                    {renderMinisectors(activeLapData.segments_sector_3)}
-                                </div>
-                            </div>
-                        ) : (
+                        {activeLapData ? renderSectorBlock(activeLapData) : (
                             <span className="text-xs text-gray-600 italic">Sector data unavailable for this lap</span>
                         )}
                     </div>
-
                 </div>
             </div>
         </div>

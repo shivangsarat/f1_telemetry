@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 import { useRaceStore } from '../store/useRaceStore';
 
@@ -27,10 +27,26 @@ const renderMinisectors = (segments: number[]) => {
     );
 };
 
+const getFlagTheme = (flag: string) => {
+    switch(flag?.toUpperCase()) {
+        case 'YELLOW': 
+        case 'DOUBLE YELLOW': return { border: 'border-yellow-500', bg: 'bg-yellow-500/10', text: 'text-yellow-400', icon: '🟨' };
+        case 'RED': return { border: 'border-red-500', bg: 'bg-red-500/10', text: 'text-red-500', icon: '🟥' };
+        case 'GREEN': 
+        case 'CLEAR': return { border: 'border-green-500', bg: 'bg-green-500/10', text: 'text-green-400', icon: '🟩' };
+        case 'BLUE': return { border: 'border-blue-500', bg: 'bg-blue-500/10', text: 'text-blue-400', icon: '🟦' };
+        case 'CHEQUERED': return { border: 'border-white', bg: 'bg-white/10', text: 'text-white', icon: '🏁' };
+        case 'BLACK AND WHITE': return { border: 'border-gray-400', bg: 'bg-gray-400/10', text: 'text-gray-300', icon: '🏴' };
+        default: return { border: 'border-gray-600', bg: 'bg-gray-800/50', text: 'text-gray-300', icon: 'ℹ️' };
+    }
+};
+
 export const Dashboard = () => {
     const { sessionKey } = useParams();
+    const navigate = useNavigate();
     const isLive = sessionKey === 'live';
-    const [histData, setHistData] = useState<any>({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, loading: !isLive });
+    
+    const [histData, setHistData] = useState<any>({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, availableSessions: [], loading: !isLive });
     const [histRaceControl, setHistRaceControl] = useState<any[]>([]);
     
     const [rcExpanded, setRcExpanded] = useState(false);
@@ -39,7 +55,7 @@ export const Dashboard = () => {
     const { intervals: liveResults, weather: liveWeather, sessionBests: liveBests, isRace: liveIsRace, maxRaceLap: liveMaxLap, raceControl: liveRc, connect } = useRaceStore();
 
     useEffect(() => {
-        setHistData({ results: [], weather: null, sessionBests: null, isRace: true, loading: !isLive });
+        setHistData({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, availableSessions: [], loading: !isLive });
         if (isLive) {
             connect();
         } else {
@@ -47,18 +63,22 @@ export const Dashboard = () => {
                 fetch(`http://localhost:8080/api/race-details/${sessionKey}`).then(r => r.json()),
                 fetch(`http://localhost:8080/api/race-control/${sessionKey}`).then(r => r.json())
             ]).then(([data, rcData]) => {
+                if (data.active_session_key && String(data.active_session_key) !== String(sessionKey)) {
+                    navigate(`/race/${data.active_session_key}`, { replace: true });
+                    return;
+                }
                 setHistData({ ...data, loading: false });
                 setHistRaceControl(rcData);
             }).catch(() => setHistData(prev => ({ ...prev, loading: false })));
         }
-    }, [isLive, sessionKey, connect]);
+    }, [isLive, sessionKey, connect, navigate]);
 
     const activeResults = isLive ? liveResults : histData.results;
     const activeWeather = isLive ? liveWeather : histData.weather;
     const activeBests = isLive && liveBests ? liveBests : histData.sessionBests;
     const isRaceMode = isLive ? liveIsRace : histData.isRace;
-    const activeRaceControl = isLive ? liveRc : histRaceControl;
     const activeMaxLap = isLive ? liveMaxLap : histData.maxRaceLap;
+    const activeRaceControl = isLive ? liveRc : histRaceControl;
 
     useEffect(() => {
         if (isLive && activeRaceControl.length > 0) {
@@ -104,11 +124,7 @@ export const Dashboard = () => {
             header: 'Laps', 
             accessor: (row: any) => {
                 const isRetired = row.status === 'DNF' || row.status === 'DNS';
-                return (
-                    <span className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}>
-                        {row.driver_laps}
-                    </span>
-                );
+                return <span className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}>{row.driver_laps}</span>;
             }
         },
         { 
@@ -127,68 +143,110 @@ export const Dashboard = () => {
         }
     ];
 
-    const renderPitSubRow = (driver: any) => (
-        <div className="p-4 ml-8 border-l-2 border-gray-700 text-xs text-gray-400 flex flex-col gap-4 bg-gray-900/60 rounded-r border-t border-b border-r border-gray-800/50">
-            <div className="flex flex-wrap items-start gap-8 text-sm">
-                <div><span className="font-bold text-gray-400 block mb-1">Best Lap:</span> <span className="font-mono text-white">{driver.best_lap}</span></div>
-                <div><span className="font-bold text-gray-400 block mb-1">Last Lap:</span> <span className="font-mono text-white">{driver.last_lap}</span></div>
-                {driver.last_sectors && (
-                    <div className="flex gap-6 font-mono text-gray-400 text-xs">
-                        <div className="w-16">
-                            <span>S1: <strong className="text-gray-300">{driver.last_sectors.s1 ? `${driver.last_sectors.s1.toFixed(3)}s` : '-'}</strong></span>
-                            {renderMinisectors(driver.last_sectors.seg1)}
+    // FIX: Perfected Sector Block Alignment using fixed heights and flex-col
+    const renderSectorBlock = (sectors: any) => {
+        if (!sectors) return null;
+        return (
+            <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
+                <div className="w-20 flex flex-col justify-end">
+                    <span className="block text-gray-500 mb-0.5">S1:</span>
+                    <strong className="text-gray-200 text-sm block mb-1">{sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-'}</strong>
+                    <div className="h-8 flex flex-col justify-start">
+                        {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
+                    </div>
+                    {renderMinisectors(sectors.seg1)}
+                </div>
+                <div className="w-20 flex flex-col justify-end">
+                    <span className="block text-gray-500 mb-0.5">S2:</span>
+                    <strong className="text-gray-200 text-sm block mb-1">{sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-'}</strong>
+                    <div className="h-8 flex flex-col justify-start">
+                        {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
+                    </div>
+                    {renderMinisectors(sectors.seg2)}
+                </div>
+                <div className="w-20 flex flex-col justify-end">
+                    <span className="block text-gray-500 mb-0.5">S3:</span>
+                    <strong className="text-gray-200 text-sm block mb-1">{sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-'}</strong>
+                    <div className="h-8 flex flex-col justify-start">
+                        {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
+                    </div>
+                    {renderMinisectors(sectors.seg3)}
+                </div>
+            </div>
+        );
+    };
+
+    const renderPitSubRow = (driver: any) => {
+        const showCurrent = isLive && !isRaceMode;
+        const displaySectors = isRaceMode ? driver.last_sectors : driver.best_sectors;
+
+        return (
+            <div className="p-4 ml-8 border-l-2 border-gray-700 text-xs text-gray-400 flex flex-col gap-4 bg-gray-900/60 rounded-r border-t border-b border-r border-gray-800/50">
+                <div className="flex flex-wrap items-start gap-12 text-sm">
+                    <div className="flex flex-col gap-1">
+                        <div>
+                            <span className="font-bold text-gray-400 block mb-1">Best Lap:</span> 
+                            <span className="font-mono text-white text-lg font-bold">{driver.best_lap}</span>
                         </div>
-                        <div className="w-16">
-                            <span>S2: <strong className="text-gray-300">{driver.last_sectors.s2 ? `${driver.last_sectors.s2.toFixed(3)}s` : '-'}</strong></span>
-                            {renderMinisectors(driver.last_sectors.seg2)}
+                        {(!isRaceMode && driver.best_sectors) && renderSectorBlock(driver.best_sectors)}
+                    </div>
+                    
+                    {(isRaceMode || showCurrent) && (
+                        <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
+                            <div>
+                                <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
+                                <span className="font-mono text-white text-lg font-bold">
+                                    {(driver.last_lap === '-' && showCurrent) ? 'In Progress' : driver.last_lap}
+                                </span>
+                            </div>
+                            {displaySectors && renderSectorBlock(displaySectors)}
                         </div>
-                        <div className="w-16">
-                            <span>S3: <strong className="text-gray-300">{driver.last_sectors.s3 ? `${driver.last_sectors.s3.toFixed(3)}s` : '-'}</strong></span>
-                            {renderMinisectors(driver.last_sectors.seg3)}
+                    )}
+                </div>
+
+                <div className="flex items-center gap-4 pt-6 pb-8">
+                    <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
+                    <div className="flex-1 flex items-center relative h-2.5 bg-gray-800 rounded-full">
+                        {driver.stints && driver.stints.map((stint: any, i: number) => {
+                            const widthPct = (stint.length / Math.max(driver.total_laps, 1)) * 100;
+                            const isFirst = i === 0;
+                            const isLast = i === driver.stints.length - 1;
+                            const tyreColor = getTyreColor(stint.compound);
+                            
+                            return (
+                                <div key={i} className="h-full relative flex items-center justify-center transition-all duration-500"
+                                    style={{ width: `${widthPct}%`, backgroundColor: tyreColor, borderTopLeftRadius: isFirst ? '9999px' : '0', borderBottomLeftRadius: isFirst ? '9999px' : '0', borderTopRightRadius: isLast ? '9999px' : '0', borderBottomRightRadius: isLast ? '9999px' : '0' }}>
+                                    {stint.length > 2 && <span className="absolute -top-6 text-[11px] font-bold font-mono tracking-tight drop-shadow-sm" style={{ color: tyreColor }}>{stint.length}L</span>}
+                                    {i > 0 && (
+                                        <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
+                                            <div className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80" style={{ backgroundColor: tyreColor }} />
+                                            <span className="absolute top-4 text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">L{stint.start}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+                
+                {driver.pit_stops && driver.pit_stops.length > 0 && (
+                    <div className="flex items-start gap-4 pt-4 border-t border-gray-800/50">
+                        <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider mt-1">Pits:</span>
+                        <div className="flex flex-wrap gap-2">
+                            {driver.pit_stops.map((p: any, i: number) => (
+                                <div key={i} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px]">
+                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Lap {p.lap}</span>
+                                    {p.stop_duration && <span>Box: <strong className="text-white">{p.stop_duration.toFixed(2)}s</strong></span>}
+                                    {p.lane_duration && <span>Lane: <strong className="text-gray-300">{p.lane_duration.toFixed(2)}s</strong></span>}
+                                    {(!p.stop_duration && !p.lane_duration && p.pit_duration) && <span>Time: <strong className="text-white">{p.pit_duration.toFixed(2)}s</strong></span>}
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}
             </div>
-
-            <div className="flex items-center gap-4 pt-6 pb-8">
-                <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
-                <div className="flex-1 flex items-center relative h-2.5 bg-gray-800 rounded-full">
-                    {driver.stints && driver.stints.map((stint: any, i: number) => {
-                        const widthPct = (stint.length / driver.total_laps) * 100;
-                        const isFirst = i === 0;
-                        const isLast = i === driver.stints.length - 1;
-                        const tyreColor = getTyreColor(stint.compound);
-                        
-                        return (
-                            <div key={i} className="h-full relative flex items-center justify-center transition-all duration-500"
-                                style={{ width: `${widthPct}%`, backgroundColor: tyreColor, borderTopLeftRadius: isFirst ? '9999px' : '0', borderBottomLeftRadius: isFirst ? '9999px' : '0', borderTopRightRadius: isLast ? '9999px' : '0', borderBottomRightRadius: isLast ? '9999px' : '0' }}>
-                                {stint.length > 2 && <span className="absolute -top-6 text-[11px] font-bold font-mono tracking-tight drop-shadow-sm" style={{ color: tyreColor }}>{stint.length}L</span>}
-                                {i > 0 && (
-                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
-                                        <div className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80" style={{ backgroundColor: tyreColor }} />
-                                        <span className="absolute top-4 text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">L{stint.start}</span>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-            
-            {driver.pit_stops && driver.pit_stops.length > 0 && (
-                <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Pits:</span>
-                    <div className="flex flex-wrap gap-2">
-                        {driver.pit_stops.map((p: any, i: number) => (
-                            <span key={i} className="bg-gray-800 border border-gray-700 text-gray-300 font-mono px-2 py-0.5 rounded text-[11px]">
-                                Lap {p.lap}: <strong className="text-white">{p.duration ? `${p.duration.toFixed(2)}s` : '-'}</strong>
-                            </span>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
+        );
+    };
 
     return (
         <div className="flex h-screen bg-black text-white p-4 gap-6 overflow-hidden relative">
@@ -199,40 +257,66 @@ export const Dashboard = () => {
                 </div>
             )}
 
-            
-
             <div className={`fixed bottom-6 right-6 z-[60] bg-gray-900 border ${rcExpanded ? 'border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-gray-700'} rounded-xl transition-all duration-300 flex flex-col`} style={{ width: '380px', maxHeight: '500px' }}>
                 <button onClick={() => setRcExpanded(!rcExpanded)} className="p-3 font-bold uppercase text-xs tracking-widest text-left flex justify-between items-center bg-gray-800 rounded-t-xl text-red-400 hover:bg-gray-700 transition">
                     Race Control News {activeRaceControl.length > 0 && `(${activeRaceControl.length})`}
                     <span>{rcExpanded ? '▼' : '▲'}</span>
                 </button>
                 {rcExpanded && (
-                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 custom-scrollbar bg-gray-900 rounded-b-xl border-t border-gray-800">
-                        {activeRaceControl.map((msg: any, i: number) => (
-                            <div key={i} className="border-l-2 border-red-500 pl-3 py-1 text-sm bg-gray-800/50 rounded-r">
-                                <span className="text-[10px] text-gray-500 font-mono block mb-1">{new Date(msg.date).toLocaleTimeString()} | {msg.category}</span>
-                                <span className="text-gray-200 leading-snug">{msg.message}</span>
-                            </div>
-                        ))}
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 custom-scrollbar bg-gray-900 rounded-b-xl border-t border-gray-800">
+                        {activeRaceControl.map((msg: any, i: number) => {
+                            const theme = getFlagTheme(msg.flag);
+                            return (
+                                <div key={i} className={`border-l-4 ${theme.border} ${theme.bg} pl-3 py-2 text-sm rounded-r`}>
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className="text-[10px] text-gray-400 font-mono tracking-widest">{new Date(msg.date).toLocaleTimeString()} | {msg.category}</span>
+                                        <span className="text-lg leading-none">{theme.icon}</span>
+                                    </div>
+                                    <span className={`${theme.text} leading-snug font-medium block`}>{msg.message}</span>
+                                </div>
+                            );
+                        })}
                         {activeRaceControl.length === 0 && <span className="text-gray-500 italic text-sm">No recent messages.</span>}
                     </div>
                 )}
             </div>
 
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
-                {/* Top Nav with the new Dynamic Lap Counter */}
+                
                 <div className="flex justify-between items-center">
-                    <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back to Standings</Link>
+                    <div className="flex items-center gap-6">
+                        <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
+                        
+                        {!isLive && histData.availableSessions?.length > 0 && (
+                            <div className="flex gap-1 bg-gray-900 p-1 rounded-lg border border-gray-800 shadow-inner">
+                                {histData.availableSessions.map((s: any) => {
+                                    const isFuture = new Date(s.date_start).getTime() > Date.now();
+                                    const isActive = s.session_key === Number(sessionKey);
+                                    
+                                    return (
+                                        <button 
+                                            key={s.session_key} 
+                                            onClick={() => !isFuture && navigate(`/race/${s.session_key}`)}
+                                            disabled={isFuture}
+                                            title={isFuture ? "Session has not started yet" : ""}
+                                            className={`px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest transition 
+                                                ${isActive ? 'bg-blue-600 text-white shadow' : 
+                                                  isFuture ? 'text-gray-700 cursor-not-allowed opacity-60' : 
+                                                  'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+                                        >
+                                            {s.session_name}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                     
                     {isRaceMode && activeMaxLap > 0 && (
                         <div className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3">
                             <div className={`w-2 h-2 rounded-full ${isLive ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
-                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">
-                                Total Laps
-                            </span>
-                            <span className="font-black text-white font-mono text-sm">
-                                {activeMaxLap}
-                            </span>
+                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Total Laps</span>
+                            <span className="font-black text-white font-mono text-sm">{activeMaxLap}</span>
                         </div>
                     )}
                 </div>
@@ -267,7 +351,7 @@ export const Dashboard = () => {
                 <div className="bg-gray-900 rounded-xl border border-gray-800 flex-1 flex flex-col overflow-hidden shadow-2xl">
                     <div className="overflow-y-auto flex-1 custom-scrollbar relative">
                         {histData.loading ? (
-                            <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Race Data...</div>
+                            <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
                         ) : (
                             <Table data={activeResults || []} columns={driverColumns} expandableRender={renderPitSubRow} />
                         )}
