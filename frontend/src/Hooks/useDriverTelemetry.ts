@@ -1,47 +1,25 @@
-import { useEffect, useRef, useState } from 'react';
-import { useRaceStore } from '../store/useRaceStore';
+import { useState, useEffect, useRef } from 'react';
 
-export const useDriverTelemetry = (driverNumber: number, isLive: boolean = true) => {
-    const [telemetry, setTelemetry] = useState<any[]>([]);
-    const ws = useRaceStore(state => state.socket);
-    const lastTimestampRef = useRef<string | null>(null);
+export const useDriverTelemetry = (driverNumber: number, isLive: boolean) => {
+    const [payload, setPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
+    const ws = useRef<WebSocket | null>(null);
 
     useEffect(() => {
-        if (!isLive || !ws || ws.readyState !== WebSocket.OPEN) return;
-
-        ws.send(JSON.stringify({ type: 'SUBSCRIBE_TELEMETRY', driver: driverNumber }));
-
-        const handleMessage = (event: MessageEvent) => {
+        if (!isLive) return;
+        ws.current = new WebSocket('ws://localhost:8080');
+        ws.current.onopen = () => ws.current?.send(JSON.stringify({ type: 'SUBSCRIBE_TELEMETRY', driver: driverNumber }));
+        
+        ws.current.onmessage = (event) => {
             const msg = JSON.parse(event.data);
-            if (msg.type === 'TELEMETRY_UPDATE' && msg.driver === driverNumber) {
-                const newData = msg.data;
-                if (newData.length > 0) {
-                    lastTimestampRef.current = newData[newData.length - 1].date;
-                    setTelemetry(prev => [...prev, ...newData].slice(-500));
-                }
+            if (msg.type === 'TELEMETRY_UPDATE' && msg.driver === driverNumber && msg.data) {
+                setPayload(msg.data);
             }
         };
-
-        ws.addEventListener('message', handleMessage);
-
-        const handleVisibilityChange = () => {
-            if (document.hidden) {
-                ws.send(JSON.stringify({ type: 'UNSUBSCRIBE_TELEMETRY', driver: driverNumber }));
-            } else {
-                ws.send(JSON.stringify({ 
-                    type: 'SUBSCRIBE_TELEMETRY', driver: driverNumber, since: lastTimestampRef.current 
-                }));
-            }
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-
         return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            ws.removeEventListener('message', handleMessage);
-            ws.send(JSON.stringify({ type: 'UNSUBSCRIBE_TELEMETRY', driver: driverNumber }));
+            if (ws.current?.readyState === WebSocket.OPEN) ws.current?.send(JSON.stringify({ type: 'UNSUBSCRIBE_TELEMETRY', driver: driverNumber }));
+            ws.current?.close();
         };
-    }, [driverNumber, ws, isLive]);
+    }, [driverNumber, isLive]);
 
-    return telemetry;
+    return payload;
 };

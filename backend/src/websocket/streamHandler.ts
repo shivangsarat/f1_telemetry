@@ -1,7 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import axios from 'axios';
-import { OPENF1_BASE } from '../config';
-import { getCleanTelemetry, getRaceDetails } from '../services/dataService';
+import { getCleanTelemetry, getRaceDetails, getRaceControl } from '../services/dataService';
 
 export const setupWebSocket = (server: any) => {
     const wss = new WebSocketServer({ server });
@@ -9,13 +7,12 @@ export const setupWebSocket = (server: any) => {
     const timers = new Map<number, NodeJS.Timeout>();
     let isRateLimited = false;
 
-    // 5-second interval for Global Dashboards
     setInterval(async () => {
         if (wss.clients.size === 0 || isRateLimited) return;
         try {
-            // Re-use the cleaned backend logic for the live dashboard
             const data = await getRaceDetails('latest'); 
-            const payload = JSON.stringify({ type: 'GLOBAL_TICK', data });
+            const rcData = await getRaceControl('latest'); 
+            const payload = JSON.stringify({ type: 'GLOBAL_TICK', data, raceControl: rcData });
             wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(payload); });
         } catch (e: any) {
             if (e.response?.status === 429) { isRateLimited = true; setTimeout(() => { isRateLimited = false; }, 10000); }
@@ -32,10 +29,9 @@ export const setupWebSocket = (server: any) => {
         if (isRateLimited) return;
 
         try {
-            // Frontend receives perfectly mapped {lapX, speed...} data, even for live streams
-            const cleanData = await getCleanTelemetry('latest', driverNumber, sinceTimestamp);
-            if (cleanData.length > 0) {
-                const payload = JSON.stringify({ type: 'TELEMETRY_UPDATE', driver: driverNumber, data: cleanData });
+            const payloadData = await getCleanTelemetry('latest', driverNumber, sinceTimestamp);
+            if (payloadData.telemetry.length > 0) {
+                const payload = JSON.stringify({ type: 'TELEMETRY_UPDATE', driver: driverNumber, data: payloadData });
                 clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(payload); });
             }
         } catch (e: any) {
