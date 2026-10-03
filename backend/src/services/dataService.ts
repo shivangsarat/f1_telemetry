@@ -3,6 +3,7 @@ import { OPENF1_BASE, ERGAST_BASE } from '../config';
 import { processTelemetry } from './telemetryProcessor';
 
 const cache = new Map<string, { data: any, expires: number }>();
+cache.clear();
 const pendingRequests = new Map<string, Promise<any>>();
 let globalRequestQueue = Promise.resolve();
 
@@ -13,7 +14,7 @@ const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
         await sleep(350); 
         return fetcher();
     });
-    globalRequestQueue = execute.catch(() => {}); 
+    globalRequestQueue = execute.then(() => {}).catch(() => {});
     return execute as Promise<T>;
 };
 
@@ -64,11 +65,12 @@ const formatLapTime = (seconds: number | null) => {
 };
 
 export const getHomeData = async () => {
+    const TARGET_YEAR = 2024;
     const [driversRes, teamsRes, meetingsRes, sessionsRes, liveRes] = await Promise.all([
         getCached('drivers_std', 600000, () => axios.get(`${ERGAST_BASE}/current/driverStandings.json`)),
         getCached('teams_std', 600000, () => axios.get(`${ERGAST_BASE}/current/constructorStandings.json`)),
-        getCached('meetings', 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=${new Date().getFullYear()}`)),
-        getCached('sessions_race', 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=${new Date().getFullYear()}&session_name=Race`)),
+        getCached('meetings', 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=${TARGET_YEAR}`)),
+        getCached('sessions_race', 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=${TARGET_YEAR}&session_name=Race`)),
         getCached('live_status', 30000, () => axios.get(`${OPENF1_BASE}/sessions?session_key=latest`))
     ]);
 
@@ -89,6 +91,7 @@ export const getHomeData = async () => {
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
+    console.log('Fetched home data:', meetingsRes);
     const races = (meetingsRes?.data || []).map((m: any) => {
         const race = sessionsRes?.data?.find((s: any) => s.meeting_key === m.meeting_key);
         return race ? { round: m.meeting_name, location: m.location, date: m.date_start, session_key: race.session_key } : null;
