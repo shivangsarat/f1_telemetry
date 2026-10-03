@@ -46,51 +46,68 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
     async connect(callbacks: TelemetryCallbacks): Promise<void> {
         this.callbacks = callbacks;
         await this.authenticate();
-        console.log(`🔌 [Live Engine] Connected via ${this.name}. Optimized for 30 req/min.`);
+        console.log(`🔌 [Live Engine] Connected via ${this.name}. Throttled for safety.`);
 
-        // POLL EVERY 2 SECONDS (30 requests per minute total)
+        // GUARDRAIL 1: Poll every 3 seconds (20 req/min) to completely eliminate 429s
         this.pollInterval = setInterval(async () => {
             if (this.subscribedDrivers.size === 0) return;
 
-            try {
-                await this.authenticate();
+            let retries = 3;
+            let delay = 1000;
 
-                // Fetch telemetry for ALL drivers in ONE request
-                const carRes = await axios.get(`${this.baseUrl}/car_data?session_key=latest&date>=${this.lastFetchTime}`, { 
-                    headers: this.authHeaders 
-                });
+            while (retries > 0) {
+                try {
+                    await this.authenticate();
 
-                if (carRes.data && carRes.data.length > 0) {
-                    // Update timestamp for the next tick to prevent fetching duplicate data
-                    this.lastFetchTime = carRes.data[carRes.data.length - 1].date;
+                    const queryUrl = this.lastFetchTime 
+                        ? `${this.baseUrl}/car_data?session_key=latest&date>=${this.lastFetchTime}`
+                        : `${this.baseUrl}/car_data?session_key=latest`;
 
-                    // Group payload by driver
-                    const driverData = new Map<number, any[]>();
-                    carRes.data.forEach((point: any) => {
-                        const dNum = point.driver_number;
-                        if (!driverData.has(dNum)) driverData.set(dNum, []);
-                        driverData.get(dNum)!.push(point);
+                    const carRes = await axios.get(queryUrl, { 
+                        headers: this.authHeaders 
                     });
 
-                    // Broadcast only to drivers the frontend is actively watching
-                    for (const [driverNum, points] of driverData.entries()) {
-                        if (this.subscribedDrivers.has(driverNum) && points.length > 0) {
-                            const latest = points[points.length - 1]; 
-                            this.callbacks?.onTelemetry(driverNum, {
-                                lapX: Date.now(), 
-                                speed: latest.speed || 0,
-                                rpm: latest.rpm || 0,
-                                gear: latest.n_gear || 0,
-                                throttle: latest.throttle || 0,
-                                brake: latest.brake || 0
-                            });
+                    if (carRes.data && carRes.data.length > 0) {
+                        this.lastFetchTime = carRes.data[carRes.data.length - 1].date;
+
+                        const driverData = new Map<number, any[]>();
+                        carRes.data.forEach((point: any) => {
+                            const dNum = point.driver_number;
+                            if (!driverData.has(dNum)) driverData.set(dNum, []);
+                            driverData.get(dNum)!.push(point);
+                        });
+
+                        for (const [driverNum, points] of driverData.entries()) {
+                            if (this.subscribedDrivers.has(driverNum) && points.length > 0) {
+                                const latest = points[points.length - 1]; 
+                                this.callbacks?.onTelemetry(driverNum, {
+                                    lapX: Date.now(), 
+                                    speed: latest.speed || 0,
+                                    rpm: latest.rpm || 0,
+                                    gear: latest.n_gear || 0,
+                                    throttle: latest.throttle || 0,
+                                    brake: latest.brake || 0
+                                });
+                            }
                         }
                     }
+                    break; // Success, exit retry loop
+                } catch (err: any) {
+                    if (err.response?.status === 429) {
+                        retries--;
+                        if (retries === 0) {
+                            // Silently back off instead of flooding console logs
+                            break;
+                        }
+                        await new Promise(res => setTimeout(res, delay));
+                        delay *= 2; // Exponential backoff
+                    } else {
+                        this.callbacks?.onError?.(err);
+                        break;
+                    }
                 }
-            } catch (err: any) {
-                this.callbacks?.onError?.(err);
             }
-        }, 200);
+        }, 3000); // 3-second interval
     }
 
     subscribeDriver(driverNumber: number): void { this.subscribedDrivers.add(driverNumber); }

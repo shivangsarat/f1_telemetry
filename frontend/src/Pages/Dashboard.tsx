@@ -8,7 +8,9 @@ import { getTyreColor } from '../Utils/helpers';
 export const Dashboard = () => {
     const { sessionKey } = useParams();
     const navigate = useNavigate();
-    const isLive = sessionKey === 'live';
+
+    const effectiveSessionKey = sessionKey === 'live' ? 'latest' : sessionKey;
+    const isLive = effectiveSessionKey === 'live';
     
     const [histData, setHistData] = useState<any>({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, availableSessions: [], loading: !isLive });
     const [histRaceControl, setHistRaceControl] = useState<any[]>([]);
@@ -25,10 +27,10 @@ export const Dashboard = () => {
             connect();
         } else {
             Promise.all([
-                fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json()),
-                fetch(`${API_BASE}/api/race-control/${sessionKey}`).then(r => r.json())
+                fetch(`${API_BASE}/api/race-details/${effectiveSessionKey}`).then(r => r.json()),
+                fetch(`${API_BASE}/api/race-control/${effectiveSessionKey}`).then(r => r.json())
             ]).then(([data, rcData]) => {
-                if (data.active_session_key && String(data.active_session_key) !== String(sessionKey)) {
+                if (data.active_session_key && String(data.active_session_key) !== String(effectiveSessionKey)) {
                     navigate(`/race/${data.active_session_key}`, { replace: true });
                     return;
                 }
@@ -36,7 +38,7 @@ export const Dashboard = () => {
                 setHistRaceControl(rcData);
             }).catch(() => setHistData((prev: any) => ({ ...prev, loading: false })));
         }
-    }, [isLive, sessionKey, connect, navigate]);
+    }, [isLive, effectiveSessionKey, connect, navigate]);
 
     const activeResults = isLive ? liveResults : histData.results;
     const activeWeather = isLive ? liveWeather : histData.weather;

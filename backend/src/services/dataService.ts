@@ -49,8 +49,9 @@ const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
         const now = Date.now();
         const timeSinceLast = now - lastRequestTime;
         
-        if (timeSinceLast < 200) {
-            await sleep(200 - timeSinceLast);
+        // GUARDRAIL 2: Enforce at least 500ms between ANY REST endpoint call
+        if (timeSinceLast < 500) {
+            await sleep(500 - timeSinceLast);
         }
         
         lastRequestTime = Date.now();
@@ -178,7 +179,6 @@ export const getRaceDetails = async (sessionKey: string) => {
         
         if (sessionInfo.meeting_key) {
             const meetingSessionsRes = await getCached(`meeting_sessions_${sessionInfo.meeting_key}`, ttl, () => openF1Request(`${OPENF1_BASE}/sessions?meeting_key=${sessionInfo.meeting_key}`));
-            
             availableSessions = (meetingSessionsRes.data || []).sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
             
             const now = Date.now();
@@ -196,12 +196,19 @@ export const getRaceDetails = async (sessionKey: string) => {
     const isRace = activeSessionInfo.session_type?.includes('Race') || activeSessionInfo.session_type?.includes('Sprint');
     sessionName = activeSessionInfo.session_name || sessionName;
 
+    // --- STAGGERED SEQUENTIAL FETCHING TO PREVENT 429 RATE LIMITS ---
     const wRes = await getCached(`weather_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/weather?session_key=${sessionKey}`));
+    await sleep(400);
     const iRes = await getCached(`intervals_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/intervals?session_key=${sessionKey}`));
+    await sleep(400);
     const posRes = await getCached(`positions_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/position?session_key=${sessionKey}`));
+    await sleep(400);
     const dRes = await getCached(`drivers_${sessionKey}`, 86400000, () => openF1Request(`${OPENF1_BASE}/drivers?session_key=${sessionKey}`));
+    await sleep(400);
     const pRes = await getCached(`pits_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/pit_stops?session_key=${sessionKey}`));
+    await sleep(400);
     const lRes = await getCached(`laps_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${sessionKey}`));
+    await sleep(400);
     const sRes = await getCached(`stints_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}`));
 
     const weather = wRes.data[wRes.data.length - 1] || null;
