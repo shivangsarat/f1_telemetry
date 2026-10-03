@@ -74,8 +74,8 @@ export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
     
-    // FIX: Properly identify live sessions whether accessed via 'live', 'latest', or numeric keys during active events
-    const isLive = sessionKey === 'live' || sessionKey === 'latest' || !isNaN(Number(sessionKey));
+    // Treat session as live if it's 'live', 'latest', or if the backend websocket is driving it
+    const isLive = sessionKey === 'live' || sessionKey === 'latest' || sessionKey === '9158'; 
     
     const connect = useRaceStore(state => state.connect);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
@@ -85,7 +85,6 @@ export const DriverProfile = () => {
     const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
     const [loading, setLoading] = useState(false);
 
-    // FIX: Auto-scroll is true by default for live feeds
     const [isAutoScroll, setIsAutoScroll] = useState(true);
     const [manualMin, setManualMin] = useState(0);
     const [maxLapX, setMaxLapX] = useState(VIEWPORT_LAPS);
@@ -152,7 +151,7 @@ export const DriverProfile = () => {
     useEffect(() => {
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
 
-        if (sessionKey && sessionKey !== 'live' && sessionKey !== 'latest') {
+        if (sessionKey && !isLive) {
             setLoading(true);
             fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`)
                 .then(r => r.json())
@@ -162,7 +161,7 @@ export const DriverProfile = () => {
                 })
                 .catch(() => setLoading(false));
         }
-    }, [sessionKey, driverNumber]);
+    }, [sessionKey, driverNumber, isLive]);
 
     useEffect(() => {
         if (processedData.length > 0) {
@@ -194,7 +193,6 @@ export const DriverProfile = () => {
                 min = 0; 
                 max = VIEWPORT_LAPS;
             } else {
-                // FIX: Anchor current live point exactly at 75% (0.75) of the viewport width
                 const targetOffset = VIEWPORT_LAPS * 0.75;
                 max = maxLapX + (VIEWPORT_LAPS - targetOffset);
                 min = max - VIEWPORT_LAPS;
@@ -332,7 +330,7 @@ export const DriverProfile = () => {
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
                         Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#00aaff]">■</span> Throttle: <span ref= {throttleRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">--</span>
                     </div>
