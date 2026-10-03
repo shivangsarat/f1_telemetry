@@ -18,12 +18,15 @@ export const Dashboard = () => {
 
     useEffect(() => {
         setHistData({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, availableSessions: [], loading: !isLive });
+        
+        const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
+
         if (isLive) {
             connect();
         } else {
             Promise.all([
-                fetch(`http://localhost:8080/api/race-details/${sessionKey}`).then(r => r.json()),
-                fetch(`http://localhost:8080/api/race-control/${sessionKey}`).then(r => r.json())
+                fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json()),
+                fetch(`${API_BASE}/api/race-control/${sessionKey}`).then(r => r.json())
             ]).then(([data, rcData]) => {
                 if (data.active_session_key && String(data.active_session_key) !== String(sessionKey)) {
                     navigate(`/race/${data.active_session_key}`, { replace: true });
@@ -88,7 +91,6 @@ export const Dashboard = () => {
             header: isRaceMode ? 'Gap' : 'Gap to P1', 
             accessor: (row: any) => {
                 const isRetired = row.status === 'DNF' || row.status === 'DNS';
-                // Grab the active stint to show current tyre info
                 const currentStint = row.stints?.[row.stints.length - 1];
 
                 return (
@@ -97,7 +99,6 @@ export const Dashboard = () => {
                             {row.gap_to_leader}
                         </span>
                         
-                        {/* Replaced Toggle Details with Current Tyre & Stint Length */}
                         {!isRetired && currentStint ? (
                             <div className="flex items-center gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
                                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
@@ -131,7 +132,35 @@ export const Dashboard = () => {
 
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
                 <div className="flex justify-between items-center">
-                    <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
+                    
+                    <div className="flex items-center gap-6">
+                        <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
+                        
+                        <div className="flex gap-2 bg-gray-900/50 p-1 rounded-lg">
+                            {histData.availableSessions.map((s: any) => {
+                                const isFuture = new Date(s.date_start).getTime() > Date.now();
+                                const isActive = sessionKey === String(s.session_key);
+
+                                return (
+                                    <button
+                                        key={s.session_key}
+                                        onClick={() => navigate(`/race/${s.session_key}`)}
+                                        disabled={isFuture}
+                                        className={`px-4 py-2 text-xs font-bold tracking-widest rounded-md transition-all ${
+                                            isActive 
+                                                ? 'bg-red-600 text-white shadow-lg' 
+                                                : isFuture
+                                                    ? 'text-gray-700 cursor-not-allowed opacity-50'
+                                                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                                        }`}
+                                    >
+                                        {s.session_name.toUpperCase()}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
                     {isRaceMode && activeMaxLap > 0 && (
                         <div className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3">
                             <div className={`w-2 h-2 rounded-full ${isLive ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>

@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 
+const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
+
 export const Home = () => {
     const [data, setData] = useState<any>(null);
     const navigate = useNavigate();
 
     useEffect(() => {
-        fetch('http://localhost:8080/api/home')
+        fetch(`${API_BASE}/api/home`)
             .then(r => r.json())
             .then(setData);
     }, []);

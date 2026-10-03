@@ -6,7 +6,11 @@ export const useDriverTelemetry = (driverNumber: number, isLive: boolean) => {
 
     useEffect(() => {
         if (!isLive) return;
-        ws.current = new WebSocket('ws://localhost:8080');
+        
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = import.meta.env.PROD ? window.location.host : 'localhost:8080';
+        
+        ws.current = new WebSocket(`${wsProtocol}//${wsHost}`);
         ws.current.onopen = () => ws.current?.send(JSON.stringify({ type: 'SUBSCRIBE_TELEMETRY', driver: driverNumber }));
         
         ws.current.onmessage = (event) => {

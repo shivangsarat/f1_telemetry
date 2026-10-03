@@ -1,6 +1,39 @@
 import axios from 'axios';
-import { OPENF1_BASE, ERGAST_BASE } from '../config';
+import { CONFIG, OPENF1_BASE, ERGAST_BASE } from '../config';
 import { processTelemetry } from './telemetryProcessor';
+
+// --- NEW AUTHENTICATION MANAGER ---
+let sharedToken: string | null = null;
+let tokenExpiry = 0;
+
+const getOpenF1Token = async () => {
+    if (CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID' || !CONFIG.OPENF1_USERNAME) return null;
+    if (sharedToken && Date.now() < tokenExpiry) return sharedToken;
+
+    const params = new URLSearchParams();
+    params.append('username', CONFIG.OPENF1_USERNAME);
+    params.append('password', CONFIG.OPENF1_PASSWORD);
+
+    try {
+        const res = await axios.post(CONFIG.OPENF1_TOKEN_URL, params, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+        sharedToken = res.data.access_token;
+        const expiresIn = parseInt(res.data.expires_in, 10) || 3600;
+        tokenExpiry = Date.now() + (expiresIn - 300) * 1000;
+        return sharedToken;
+    } catch (e) {
+        console.warn('⚠️ Failed to fetch OpenF1 token for REST APIs. Using public tier.');
+        return null;
+    }
+};
+
+const openF1Request = async (url: string) => {
+    const token = await getOpenF1Token();
+    const headers = token ? { 'Authorization': `Bearer ${token}`, 'User-Agent': 'F1-Dash/1.0' } : {};
+    return axios.get(url, { headers });
+};
+// ----------------------------------
 
 const cache = new Map<string, { data: any, expires: number }>();
 cache.clear();
@@ -16,10 +49,8 @@ const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
         const now = Date.now();
         const timeSinceLast = now - lastRequestTime;
         
-        // STRICT LIMIT: Ensure at least 1100ms passes between ANY two requests.
-        // This mathematically guarantees a maximum of 54 requests per minute.
-        if (timeSinceLast < 1100) {
-            await sleep(1100 - timeSinceLast);
+        if (timeSinceLast < 200) {
+            await sleep(200 - timeSinceLast);
         }
         
         lastRequestTime = Date.now();
@@ -38,7 +69,6 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
         try {
             const res = await enqueueRequest(fetcher);
             
-            // FIX 1: DO NOT cache if the API successfully returned an empty array
             if (res.data && (!Array.isArray(res.data) || res.data.length > 0)) {
                 cache.set(key, { data: res, expires: Date.now() + ttlMs });
             }
@@ -85,22 +115,19 @@ const formatLapTime = (seconds: number | null) => {
 export const getHomeData = async () => {
     const currentYear = new Date().getFullYear();
 
-    // 1. Fetch live status, drivers, and teams first
     const [liveRes, driversRes, teamsRes] = await Promise.all([
-        getCached('live_status', 30000, () => axios.get(`${OPENF1_BASE}/sessions?session_key=latest`)),
+        getCached('live_status', 30000, () => openF1Request(`${OPENF1_BASE}/sessions?session_key=latest`)),
         getCached('drivers_std', 600000, () => axios.get(`${ERGAST_BASE}/current/driverStandings.json`)),
         getCached('teams_std', 600000, () => axios.get(`${ERGAST_BASE}/current/constructorStandings.json`))
     ]);
 
-    // 2. Fetch the calendar for the current year
-    let meetingsRes = await getCached(`meetings_${currentYear}`, 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=${currentYear}`));
-    let sessionsRes = await getCached(`sessions_race_${currentYear}`, 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=${currentYear}&session_name=Race`));
+    let meetingsRes = await getCached(`meetings_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=${currentYear}`));
+    let sessionsRes = await getCached(`sessions_race_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}&session_name=Race`));
 
-    // FIX 2: If OpenF1 has no data for the current year, automatically fallback to a populated year
     if (!meetingsRes?.data || meetingsRes.data.length === 0) {
         console.warn(`No calendar data found for ${currentYear}. Falling back to 2024 calendar...`);
-        meetingsRes = await getCached('meetings_2024', 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=2024`));
-        sessionsRes = await getCached('sessions_race_2024', 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=2024&session_name=Race`));
+        meetingsRes = await getCached('meetings_2024', 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=2024`));
+        sessionsRes = await getCached('sessions_race_2024', 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=2024&session_name=Race`));
     }
 
     const driversData = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings || [];
@@ -145,14 +172,13 @@ export const getRaceDetails = async (sessionKey: string) => {
     let sessionName = 'Live Session';
     
     if (sessionKey !== 'latest') {
-        const sInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
+        const sInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
         const sessionInfo = sInfoRes.data[0] || {};
         sessionName = sessionInfo.session_name || 'Session';
         
         if (sessionInfo.meeting_key) {
-            const meetingSessionsRes = await getCached(`meeting_sessions_${sessionInfo.meeting_key}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?meeting_key=${sessionInfo.meeting_key}`));
+            const meetingSessionsRes = await getCached(`meeting_sessions_${sessionInfo.meeting_key}`, ttl, () => openF1Request(`${OPENF1_BASE}/sessions?meeting_key=${sessionInfo.meeting_key}`));
             
-            // FIX: Guaranteed chronological sort (Practice 1 -> Practice 2 -> Practice 3 -> Qualifying -> Race)
             availableSessions = (meetingSessionsRes.data || []).sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
             
             const now = Date.now();
@@ -165,18 +191,18 @@ export const getRaceDetails = async (sessionKey: string) => {
         }
     }
 
-    const activeSessionInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
+    const activeSessionInfoRes = await getCached(`session_info_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`));
     const activeSessionInfo = activeSessionInfoRes.data[0] || {};
     const isRace = activeSessionInfo.session_type?.includes('Race') || activeSessionInfo.session_type?.includes('Sprint');
     sessionName = activeSessionInfo.session_name || sessionName;
 
-    const wRes = await getCached(`weather_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/weather?session_key=${sessionKey}`));
-    const iRes = await getCached(`intervals_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/intervals?session_key=${sessionKey}`));
-    const posRes = await getCached(`positions_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/position?session_key=${sessionKey}`));
-    const dRes = await getCached(`drivers_${sessionKey}`, 86400000, () => axios.get(`${OPENF1_BASE}/drivers?session_key=${sessionKey}`));
-    const pRes = await getCached(`pits_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/pit_stops?session_key=${sessionKey}`));
-    const lRes = await getCached(`laps_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/laps?session_key=${sessionKey}`));
-    const sRes = await getCached(`stints_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/stints?session_key=${sessionKey}`));
+    const wRes = await getCached(`weather_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/weather?session_key=${sessionKey}`));
+    const iRes = await getCached(`intervals_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/intervals?session_key=${sessionKey}`));
+    const posRes = await getCached(`positions_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/position?session_key=${sessionKey}`));
+    const dRes = await getCached(`drivers_${sessionKey}`, 86400000, () => openF1Request(`${OPENF1_BASE}/drivers?session_key=${sessionKey}`));
+    const pRes = await getCached(`pits_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/pit_stops?session_key=${sessionKey}`));
+    const lRes = await getCached(`laps_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${sessionKey}`));
+    const sRes = await getCached(`stints_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}`));
 
     const weather = wRes.data[wRes.data.length - 1] || null;
     
@@ -312,7 +338,7 @@ export const getRaceDetails = async (sessionKey: string) => {
 
 export const getRaceControl = async (sessionKey: string) => {
     const ttl = sessionKey === 'latest' ? 5000 : 86400000;
-    const res = await getCached(`race_control_${sessionKey}`, ttl, () => axios.get(`${OPENF1_BASE}/race_control?session_key=${sessionKey}`));
+    const res = await getCached(`race_control_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/race_control?session_key=${sessionKey}`));
     return (res?.data || []).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 };
 
@@ -320,9 +346,9 @@ export const getCleanTelemetry = async (sessionKey: string, driverNumber: number
     const ttl = sessionKey === 'latest' ? 1000 : 86400000;
     const timeFilter = sinceTimestamp ? `&date>=${sinceTimestamp}` : '';
     
-    const laps = await getCached(`laps_${sessionKey}_${driverNumber}`, ttl, () => axios.get(`${OPENF1_BASE}/laps?session_key=${sessionKey}&driver_number=${driverNumber}`));
-    const carData = await getCached(`car_${sessionKey}_${driverNumber}${timeFilter}`, ttl, () => axios.get(`${OPENF1_BASE}/car_data?session_key=${sessionKey}&driver_number=${driverNumber}${timeFilter}`));
-    const stints = await getCached(`stints_${sessionKey}_${driverNumber}`, ttl, () => axios.get(`${OPENF1_BASE}/stints?session_key=${sessionKey}&driver_number=${driverNumber}`));
+    const laps = await getCached(`laps_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${sessionKey}&driver_number=${driverNumber}`));
+    const carData = await getCached(`car_${sessionKey}_${driverNumber}${timeFilter}`, ttl, () => openF1Request(`${OPENF1_BASE}/car_data?session_key=${sessionKey}&driver_number=${driverNumber}${timeFilter}`));
+    const stints = await getCached(`stints_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}&driver_number=${driverNumber}`));
     
     return {
         telemetry: processTelemetry(carData?.data || [], laps?.data || []),

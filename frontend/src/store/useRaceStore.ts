@@ -16,7 +16,13 @@ export const useRaceStore = create<RaceState>((set) => {
         intervals: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, raceControl: [],
         connect: () => {
             if (ws?.readyState === WebSocket.OPEN) return;
-            ws = new WebSocket('ws://localhost:8080');
+            // In production, use the current host. In dev, use localhost:8080.
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = import.meta.env.PROD 
+                ? `${wsProtocol}//${window.location.host}` 
+                : 'ws://localhost:8080';
+                
+            ws = new WebSocket(wsUrl);
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
                 if (msg.type === 'GLOBAL_TICK' && msg.data) {

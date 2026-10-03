@@ -90,7 +90,7 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
             } catch (err: any) {
                 this.callbacks?.onError?.(err);
             }
-        }, 2000);
+        }, 200);
     }
 
     subscribeDriver(driverNumber: number): void { this.subscribedDrivers.add(driverNumber); }

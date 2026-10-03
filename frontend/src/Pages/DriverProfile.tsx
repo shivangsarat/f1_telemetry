@@ -38,34 +38,33 @@ const formatLapTime = (seconds: number | null) => {
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
 };
 
-// Reusable fix for perfectly aligned sector blocks
 const renderSectorBlock = (sectors: any) => {
     if (!sectors) return null;
     return (
         <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
             <div className="w-20 flex flex-col justify-end">
                 <span className="block text-gray-500 mb-0.5">S1:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-'}</strong>
+                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_1 ? `${sectors.duration_sector_1.toFixed(3)}s` : (sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-')}</strong>
                 <div className="h-8 flex flex-col justify-start">
                     {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
                 </div>
-                {renderMinisectors(sectors.seg1)}
+                {renderMinisectors(sectors.segments_sector_1 || sectors.seg1)}
             </div>
             <div className="w-20 flex flex-col justify-end">
                 <span className="block text-gray-500 mb-0.5">S2:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-'}</strong>
+                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_2 ? `${sectors.duration_sector_2.toFixed(3)}s` : (sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-')}</strong>
                 <div className="h-8 flex flex-col justify-start">
                     {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
                 </div>
-                {renderMinisectors(sectors.seg2)}
+                {renderMinisectors(sectors.segments_sector_2 || sectors.seg2)}
             </div>
             <div className="w-20 flex flex-col justify-end">
                 <span className="block text-gray-500 mb-0.5">S3:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-'}</strong>
+                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_3 ? `${sectors.duration_sector_3.toFixed(3)}s` : (sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-')}</strong>
                 <div className="h-8 flex flex-col justify-start">
                     {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
                 </div>
-                {renderMinisectors(sectors.seg3)}
+                {renderMinisectors(sectors.segments_sector_3 || sectors.seg3)}
             </div>
         </div>
     );
@@ -74,7 +73,9 @@ const renderSectorBlock = (sectors: any) => {
 export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
-    const isLive = sessionKey === 'live';
+    
+    // FIX: Properly identify live sessions whether accessed via 'live', 'latest', or numeric keys during active events
+    const isLive = sessionKey === 'live' || sessionKey === 'latest' || !isNaN(Number(sessionKey));
     
     const connect = useRaceStore(state => state.connect);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
@@ -82,9 +83,10 @@ export const DriverProfile = () => {
     const liveData = useDriverTelemetry(driverNumber, isLive); 
 
     const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
-    const [loading, setLoading] = useState(!isLive);
+    const [loading, setLoading] = useState(false);
 
-    const [isAutoScroll, setIsAutoScroll] = useState(isLive);
+    // FIX: Auto-scroll is true by default for live feeds
+    const [isAutoScroll, setIsAutoScroll] = useState(true);
     const [manualMin, setManualMin] = useState(0);
     const [maxLapX, setMaxLapX] = useState(VIEWPORT_LAPS);
 
@@ -148,33 +150,30 @@ export const DriverProfile = () => {
     }, []);
 
     useEffect(() => {
-        setHistPayload({ telemetry: [], laps: [], stints: [] });
-        setManualMin(0);
+        const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
 
-        if (!isLive) {
+        if (sessionKey && sessionKey !== 'live' && sessionKey !== 'latest') {
             setLoading(true);
-            fetch(`http://localhost:8080/api/telemetry/${sessionKey}/${driverNumber}`)
+            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`)
                 .then(r => r.json())
                 .then(cleanData => {
                     setHistPayload(cleanData);
                     setLoading(false);
                 })
                 .catch(() => setLoading(false));
-        } else {
-            setLoading(false);
         }
-    }, [isLive, sessionKey, driverNumber]);
+    }, [sessionKey, driverNumber]);
 
     useEffect(() => {
         if (processedData.length > 0) {
             const xLaps = processedData.map((d: any) => d.lapX);
-            setMaxLapX(xLaps[xLaps.length - 1]); 
-            if (!isLive && manualMin === 0) setManualMin(Math.floor(xLaps[0]));
+            const latestX = xLaps[xLaps.length - 1];
+            setMaxLapX(latestX); 
             
             plotInstance1.current?.setData([xLaps, processedData.map((d: any) => d.speed), processedData.map((d: any) => d.rpm)]);
             plotInstance2.current?.setData([xLaps, processedData.map((d: any) => d.throttle), processedData.map((d: any) => d.brake), processedData.map((d: any) => d.gear)]);
         }
-    }, [processedData, isLive, manualMin]);
+    }, [processedData]);
 
     const snapToPlayhead = useCallback(() => {
         if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
@@ -184,7 +183,7 @@ export const DriverProfile = () => {
         
         plotInstance1.current.setCursor({ left: leftPx, top: -10 });
         plotInstance2.current.setCursor({ left: leftPx, top: -10 });
-    }, [isAutoScroll, maxLapX, manualMin]); 
+    }, [isAutoScroll, maxLapX]); 
 
     useEffect(() => {
         let min = manualMin;
@@ -192,9 +191,12 @@ export const DriverProfile = () => {
 
         if (isAutoScroll) {
             if (maxLapX < VIEWPORT_LAPS * 0.75) {
-                min = 0; max = VIEWPORT_LAPS;
+                min = 0; 
+                max = VIEWPORT_LAPS;
             } else {
-                max = maxLapX + (VIEWPORT_LAPS * 0.25);
+                // FIX: Anchor current live point exactly at 75% (0.75) of the viewport width
+                const targetOffset = VIEWPORT_LAPS * 0.75;
+                max = maxLapX + (VIEWPORT_LAPS - targetOffset);
                 min = max - VIEWPORT_LAPS;
             }
         }
@@ -210,11 +212,9 @@ export const DriverProfile = () => {
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
     
-    // Detailed Lap Math
     const activeLapData = activeData.laps?.find((l: any) => l.lap_number === activeLapNumber) || null;
     const activeStint = activeData.stints?.find((s: any) => s.lap_start <= activeLapNumber && (s.lap_end >= activeLapNumber || s.lap_end === 0)) || null;
 
-    // Latest Live Cockpit Data
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
@@ -246,8 +246,8 @@ export const DriverProfile = () => {
                     </div>
                 )}
 
-                {/* NEW: Live Cockpit UI */}
-                {isLive && latestTelemetry && (
+                {/* LIVE COCKPIT UI */}
+                {latestTelemetry && (
                     <div className="bg-gray-900 p-5 rounded-xl border border-green-500/30 shadow-[0_0_15px_rgba(34,197,94,0.05)] flex flex-col gap-4">
                         <div className="flex justify-between items-center border-b border-gray-800 pb-2">
                             <h2 className="font-bold uppercase tracking-wider text-green-400 text-xs flex items-center gap-2">
@@ -332,7 +332,7 @@ export const DriverProfile = () => {
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
                         Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#00aaff]">■</span> Throttle: <span ref= {throttleRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">--</span>
                     </div>
