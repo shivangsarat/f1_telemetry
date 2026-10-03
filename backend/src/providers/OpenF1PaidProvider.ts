@@ -1,8 +1,9 @@
 import axios from 'axios';
+import mqtt, { MqttClient } from 'mqtt';
 import { ITelemetryProvider, TelemetryCallbacks } from './ITelemetryProvider';
 
 export class OpenF1PaidProvider implements ITelemetryProvider {
-    name = 'OpenF1 Paid (Batched REST)';
+    name = 'OpenF1 Paid (MQTT WebSocket Stream)';
     private username: string;
     private password: string;
     private baseUrl: string;
@@ -10,9 +11,7 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
 
     private accessToken: string | null = null;
     private tokenExpiryTime: number = 0;
-    private lastFetchTime: string = new Date(Date.now() - 2000).toISOString();
-
-    private pollInterval: NodeJS.Timeout | null = null;
+    private mqttClient: MqttClient | null = null;
     private subscribedDrivers = new Set<number>();
     private callbacks: TelemetryCallbacks | null = null;
 
@@ -39,81 +38,98 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
         this.tokenExpiryTime = Date.now() + (expiresIn - 300) * 1000;
     }
 
-    private get authHeaders() {
-        return { 'Authorization': `Bearer ${this.accessToken}`, 'User-Agent': 'F1-Dash-Multiplexer/1.0' };
+    private setupTokenRefreshTimer() {
+        // Refresh token 5 minutes before it expires (e.g., every 55 minutes)
+        const refreshInterval = (3600 - 300) * 1000; 
+        setTimeout(async () => {
+            try {
+                console.log('🔄 [Live Engine] Refreshing OAuth token for MQTT stream...');
+                this.accessToken = null; // Force new token fetch
+                await this.authenticate();
+                
+                // Reconnect MQTT with the fresh token
+                if (this.mqttClient) {
+                    this.mqttClient.end(true, {}, () => {
+                        this.connect(this.callbacks!);
+                    });
+                }
+            } catch (err) {
+                console.error('❌ Failed to refresh token for MQTT:', err);
+            }
+        }, refreshInterval);
     }
 
     async connect(callbacks: TelemetryCallbacks): Promise<void> {
         this.callbacks = callbacks;
         await this.authenticate();
-        console.log(`🔌 [Live Engine] Connected via ${this.name}. Throttled for safety.`);
 
-        // GUARDRAIL 1: Poll every 3 seconds (20 req/min) to completely eliminate 429s
-        this.pollInterval = setInterval(async () => {
-            if (this.subscribedDrivers.size === 0) return;
+        if (!this.accessToken) {
+            throw new Error('Failed to obtain OpenF1 token for MQTT connection.');
+        }
 
-            let retries = 3;
-            let delay = 1000;
+        console.log(`🔌 [Live Engine] Connecting to OpenF1 MQTT WebSocket Broker...`);
 
-            while (retries > 0) {
-                try {
-                    await this.authenticate();
+        // Connect to OpenF1 MQTT over WSS using the OAuth2 token as the password
+        this.mqttClient = mqtt.connect('wss://mqtt.openf1.org:8084/mqtt', {
+            username: this.username,
+            password: this.accessToken,
+            protocol: 'wss',
+            reconnectPeriod: 5000
+        });
 
-                    const queryUrl = this.lastFetchTime 
-                        ? `${this.baseUrl}/car_data?session_key=latest&date>=${this.lastFetchTime}`
-                        : `${this.baseUrl}/car_data?session_key=latest`;
+        this.mqttClient.on('connect', () => {
+            console.log('🔌 [Live Engine] Connected successfully to OpenF1 MQTT WebSocket Stream.');
+            // Subscribe to live topics for car data and race control
+            this.mqttClient?.subscribe('v1/car_data');
+            this.mqttClient?.subscribe('v1/race_control');
 
-                    const carRes = await axios.get(queryUrl, { 
-                        headers: this.authHeaders 
-                    });
+            this.setupTokenRefreshTimer();
+        });
 
-                    if (carRes.data && carRes.data.length > 0) {
-                        this.lastFetchTime = carRes.data[carRes.data.length - 1].date;
-
-                        const driverData = new Map<number, any[]>();
-                        carRes.data.forEach((point: any) => {
-                            const dNum = point.driver_number;
-                            if (!driverData.has(dNum)) driverData.set(dNum, []);
-                            driverData.get(dNum)!.push(point);
+        this.mqttClient.on('message', (topic, payload) => {
+            try {
+                const data = JSON.parse(payload.toString());
+                
+                if (topic === 'v1/car_data' && data.driver_number) {
+                    const dNum = Number(data.driver_number);
+                    if (this.subscribedDrivers.has(dNum)) {
+                        this.callbacks?.onTelemetry(dNum, {
+                            lapX: Date.now(),
+                            speed: data.speed || 0,
+                            rpm: data.rpm || 0,
+                            gear: data.n_gear || 0,
+                            throttle: data.throttle || 0,
+                            brake: data.brake || 0
                         });
-
-                        for (const [driverNum, points] of driverData.entries()) {
-                            if (this.subscribedDrivers.has(driverNum) && points.length > 0) {
-                                const latest = points[points.length - 1]; 
-                                this.callbacks?.onTelemetry(driverNum, {
-                                    lapX: Date.now(), 
-                                    speed: latest.speed || 0,
-                                    rpm: latest.rpm || 0,
-                                    gear: latest.n_gear || 0,
-                                    throttle: latest.throttle || 0,
-                                    brake: latest.brake || 0
-                                });
-                            }
-                        }
-                    }
-                    break; // Success, exit retry loop
-                } catch (err: any) {
-                    if (err.response?.status === 429) {
-                        retries--;
-                        if (retries === 0) {
-                            // Silently back off instead of flooding console logs
-                            break;
-                        }
-                        await new Promise(res => setTimeout(res, delay));
-                        delay *= 2; // Exponential backoff
-                    } else {
-                        this.callbacks?.onError?.(err);
-                        break;
                     }
                 }
+
+                if (topic === 'v1/race_control') {
+                    this.callbacks?.onRaceControl?.(data);
+                }
+            } catch (err) {
+                console.error('Error parsing MQTT message:', err);
             }
-        }, 3000); // 3-second interval
+        });
+
+        this.mqttClient.on('error', (err) => {
+            this.callbacks?.onError?.(err);
+        });
     }
 
-    subscribeDriver(driverNumber: number): void { this.subscribedDrivers.add(driverNumber); }
-    unsubscribeDriver(driverNumber: number): void { this.subscribedDrivers.delete(driverNumber); }
+    subscribeDriver(driverNumber: number): void {
+        this.subscribedDrivers.add(driverNumber);
+    }
+
+    unsubscribeDriver(driverNumber: number): void {
+        this.subscribedDrivers.delete(driverNumber);
+    }
+
     disconnect(): void {
-        if (this.pollInterval) clearInterval(this.pollInterval);
+        if (this.mqttClient) {
+            this.mqttClient.end();
+            this.mqttClient = null;
+        }
         this.subscribedDrivers.clear();
         this.accessToken = null;
     }

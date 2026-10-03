@@ -5,7 +5,7 @@ import { useRaceStore } from '../store/useRaceStore';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
-const VIEWPORT_LAPS = 2;
+const VIEWPORT_LAPS = 3;
 
 const getTyreColor = (compound: string) => {
     const colors: Record<string, string> = { SOFT: '#FF3333', MEDIUM: '#FFFF00', HARD: '#FFFFFF', INTERMEDIATE: '#33CC33', WET: '#0066FF' };
@@ -105,7 +105,6 @@ export const DriverProfile = () => {
     const processedDataRef = useRef(processedData);
     useEffect(() => { processedDataRef.current = processedData; }, [processedData]);
 
-    // Legend state for initial rendering when cursor is not hovered
     const [legendValues, setLegendValues] = useState({ lapX: '--', speed: '--', rpm: '--', throttle: '--', brake: '--', gear: '--' });
 
     const updateLegendState = useCallback((d: any) => {
@@ -186,7 +185,6 @@ export const DriverProfile = () => {
         plotInstance1.current.setCursor({ left: leftPx, top: -10 });
         plotInstance2.current.setCursor({ left: leftPx, top: -10 });
         
-        // Find closest raw data point for smooth legend tracking
         const closest = processedDataRef.current.reduce((prev, curr) => 
             Math.abs(curr.lapX - targetX) < Math.abs(prev.lapX - targetX) ? curr : prev
         , processedDataRef.current[0]);
@@ -202,21 +200,17 @@ export const DriverProfile = () => {
             
             plotInstance1.current?.setData([xLaps, processedData.map((d: any) => d.speed), processedData.map((d: any) => d.rpm)]);
             plotInstance2.current?.setData([xLaps, processedData.map((d: any) => d.throttle), processedData.map((d: any) => d.brake), processedData.map((d: any) => d.gear)]);
-
-            updateLegendState(processedData[processedData.length - 1]);
         }
-    }, [processedData, updateLegendState]);
+    }, [processedData]);
 
     useEffect(() => {
         let min = 0;
         let max = VIEWPORT_LAPS;
 
         if (maxLapX <= VIEWPORT_LAPS) {
-            // Start: 0 to VIEWPORT_LAPS, pointer moves naturally from left to right
             min = 0;
             max = VIEWPORT_LAPS;
         } else if (isAutoScroll) {
-            // When enough data to fill 75% (VIEWPORT_LAPS * 0.75), lock pointer at 75% and shift x-axis left
             const targetOffset = VIEWPORT_LAPS * 0.75;
             max = maxLapX + (VIEWPORT_LAPS - targetOffset);
             min = max - VIEWPORT_LAPS;
@@ -369,11 +363,11 @@ export const DriverProfile = () => {
                         <div className="flex items-center gap-4">
                             <span className="text-xs text-gray-500 uppercase font-bold w-20">Timeline</span>
                             <input 
-                                type="range" min={0} max={maxAllowedScroll} step={0.1} value={currentSliderVal}
+                                type="range" min={0} max={maxAllowedScroll} step={0.01} value={currentSliderVal}
                                 onChange={(e) => {
                                     const val = parseFloat(e.target.value);
                                     setManualMin(val);
-                                    setIsAutoScroll(val >= maxAllowedScroll - 0.2);
+                                    setIsAutoScroll(val >= maxAllowedScroll - 0.1);
                                 }}
                                 className={`w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer ${isLiveTracking ? 'accent-green-500' : 'accent-blue-500'}`}
                             />
@@ -381,24 +375,88 @@ export const DriverProfile = () => {
                         </div>
                     ) : (
                         <div className="text-center text-xs text-gray-500 uppercase font-bold tracking-widest py-1">
-                            Collecting telemetry data (Auto-filling viewport...)
+                            Collecting telemetry data (Auto-filling viewport to 3 laps...)
                         </div>
                     )}
 
-                    <div className="flex flex-wrap items-center justify-between border-t border-gray-800 pt-4 px-4 bg-gray-800/20 rounded-lg mt-2">
-                        <div className="flex items-center gap-4">
-                            <span className="text-sm font-bold text-gray-400">LAP {activeLapNumber} INFO</span>
-                            {activeStint && (
-                                <div className="flex items-center gap-2 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
-                                    <div className="w-3 h-3 rounded-full border border-gray-500" style={{ backgroundColor: getTyreColor(activeStint.compound) }}></div>
-                                    <span className="text-xs font-bold text-gray-300 tracking-widest">{activeStint.compound}</span>
+                    {/* EXPANDED PANEL: SPLIT INTO CURRENT LAP INFO (LEFT) & LAP HISTORY TABLE (RIGHT) */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 border-t border-gray-800 pt-4 mt-2">
+                        
+                        {/* LEFT COLUMN: ACTIVE LAP DETAILS */}
+                        <div className="lg:col-span-5 flex flex-col justify-between bg-gray-800/20 p-4 rounded-lg border border-gray-800">
+                            <div>
+                                <div className="flex items-center justify-between mb-3">
+                                    <span className="text-sm font-bold text-gray-300 uppercase">LAP {activeLapNumber} INFO</span>
+                                    {activeStint && (
+                                        <div className="flex items-center gap-2 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                                            <div className="w-3 h-3 rounded-full border border-gray-500" style={{ backgroundColor: getTyreColor(activeStint.compound) }}></div>
+                                            <span className="text-xs font-bold text-gray-300 tracking-widest">{activeStint.compound}</span>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                                {activeLapData ? renderSectorBlock(activeLapData) : (
+                                    <span className="text-xs text-gray-600 italic">Sector data unavailable for this lap</span>
+                                )}
+                            </div>
                         </div>
 
-                        {activeLapData ? renderSectorBlock(activeLapData) : (
-                            <span className="text-xs text-gray-600 italic">Sector data unavailable for this lap</span>
-                        )}
+                        {/* RIGHT COLUMN: LAP HISTORY TABLE */}
+                        <div className="lg:col-span-7 bg-gray-800/20 p-4 rounded-lg border border-gray-800 flex flex-col">
+                            <div className="flex justify-between items-center mb-3">
+                                <span className="text-sm font-bold text-gray-300 uppercase tracking-wider">Lap History & Sectors</span>
+                                <span className="text-xs text-gray-500 font-mono">Total Laps: {activeData.laps?.length || 0}</span>
+                            </div>
+
+                            <div className="max-h-48 overflow-y-auto pr-1 flex flex-col gap-2 custom-scrollbar">
+                                {activeData.laps && activeData.laps.length > 0 ? (
+                                    activeData.laps.map((lap: any) => {
+                                        const lapDuration = lap.lap_duration;
+                                        const bestDuration = bestLapObj?.lap_duration;
+                                        const delta = (lapDuration && bestDuration) ? lapDuration - bestDuration : null;
+                                        const stint = activeData.stints?.find((s: any) => s.lap_start <= lap.lap_number && (s.lap_end >= lap.lap_number || s.lap_end === 0));
+                                        const tyreCompound = stint?.compound || 'UNKNOWN';
+
+                                        return (
+                                            <div 
+                                                key={lap.lap_number} 
+                                                onClick={() => {
+                                                    setManualMin(lap.lap_number - 1);
+                                                    setIsAutoScroll(false);
+                                                }}
+                                                className={`flex items-center justify-between p-2.5 rounded-md border text-xs font-mono cursor-pointer transition ${
+                                                    activeLapNumber === lap.lap_number 
+                                                        ? 'bg-blue-600/20 border-blue-500 text-white' 
+                                                        : 'bg-gray-900/50 border-gray-800 text-gray-400 hover:border-gray-700 hover:text-gray-200'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-bold w-12 text-gray-300">L{lap.lap_number}</span>
+                                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getTyreColor(tyreCompound) }} title={tyreCompound}></div>
+                                                    <span className="text-white font-bold">{formatLapTime(lapDuration)}</span>
+                                                    <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-500'}`}>
+                                                        {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
+                                                    </span>
+                                                </div>
+
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex flex-col gap-1 w-32">
+                                                        <div className="flex justify-between text-[10px] text-gray-500">
+                                                            <span>S1: {lap.duration_sector_1 ? lap.duration_sector_1.toFixed(2) : '-'}</span>
+                                                            <span>S2: {lap.duration_sector_2 ? lap.duration_sector_2.toFixed(2) : '-'}</span>
+                                                            <span>S3: {lap.duration_sector_3 ? lap.duration_sector_3.toFixed(2) : '-'}</span>
+                                                        </div>
+                                                        {renderMinisectors(lap.segments_sector_1 || lap.seg1)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                ) : (
+                                    <span className="text-xs text-gray-600 italic text-center py-6">No lap history recorded yet</span>
+                                )}
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             </div>
