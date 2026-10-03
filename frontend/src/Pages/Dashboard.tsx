@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 import { useRaceStore } from '../store/useRaceStore';
 import { WeatherCard, SessionBestsCard, RaceControlWidget, DriverExpandedRow } from '../Components/DashboardWidgets';
+import { getTyreColor } from '../Utils/helpers';
 
 export const Dashboard = () => {
     const { sessionKey } = useParams();
@@ -83,12 +84,39 @@ export const Dashboard = () => {
         },
         { header: 'Laps', accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{row.driver_laps}</span> },
         { header: isRaceMode ? 'Interval' : 'Best Lap', accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{isRaceMode ? row.interval : row.best_lap}</span> },
-        { header: isRaceMode ? 'Gap' : 'Gap to P1', accessor: (row: any) => (
-            <div className="flex items-center justify-between w-full pr-4">
-                <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{row.gap_to_leader}</span>
-                <span className="text-[10px] uppercase tracking-widest text-gray-400 font-bold group-hover:text-blue-400 transition-colors">Toggle Details</span>
-            </div>
-        )}
+        { 
+            header: isRaceMode ? 'Gap' : 'Gap to P1', 
+            accessor: (row: any) => {
+                const isRetired = row.status === 'DNF' || row.status === 'DNS';
+                // Grab the active stint to show current tyre info
+                const currentStint = row.stints?.[row.stints.length - 1];
+
+                return (
+                    <div className="flex items-center justify-between w-full pr-4">
+                        <span className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}>
+                            {row.gap_to_leader}
+                        </span>
+                        
+                        {/* Replaced Toggle Details with Current Tyre & Stint Length */}
+                        {!isRetired && currentStint ? (
+                            <div className="flex items-center gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                                    {currentStint.compound} ({currentStint.length}L)
+                                </span>
+                                <div 
+                                    className="w-2.5 h-2.5 rounded-full border border-gray-700 shadow-sm" 
+                                    style={{ backgroundColor: getTyreColor(currentStint.compound) }} 
+                                />
+                            </div>
+                        ) : (
+                            <span className="text-[10px] uppercase tracking-widest text-red-500/70 font-bold group-hover:text-red-400 transition-colors">
+                                {row.status !== 'Active' ? row.status : ''}
+                            </span>
+                        )}
+                    </div>
+                );
+            }
+        }
     ], [isRaceMode, sessionKey]);
 
     return (

@@ -5,16 +5,27 @@ import { processTelemetry } from './telemetryProcessor';
 const cache = new Map<string, { data: any, expires: number }>();
 cache.clear();
 const pendingRequests = new Map<string, Promise<any>>();
-let globalRequestQueue = Promise.resolve();
+let globalRequestQueue: Promise<any> = Promise.resolve();
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+let lastRequestTime = 0;
+
 const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
     const execute = globalRequestQueue.then(async () => {
-        await sleep(350); 
+        const now = Date.now();
+        const timeSinceLast = now - lastRequestTime;
+        
+        // STRICT LIMIT: Ensure at least 1100ms passes between ANY two requests.
+        // This mathematically guarantees a maximum of 54 requests per minute.
+        if (timeSinceLast < 1100) {
+            await sleep(1100 - timeSinceLast);
+        }
+        
+        lastRequestTime = Date.now();
         return fetcher();
     });
-    globalRequestQueue = execute.then(() => {}).catch(() => {});
+    globalRequestQueue = execute.catch(() => {}); 
     return execute as Promise<T>;
 };
 
@@ -26,7 +37,12 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
     const requestPromise = (async () => {
         try {
             const res = await enqueueRequest(fetcher);
-            cache.set(key, { data: res, expires: Date.now() + ttlMs });
+            
+            // FIX 1: DO NOT cache if the API successfully returned an empty array
+            if (res.data && (!Array.isArray(res.data) || res.data.length > 0)) {
+                cache.set(key, { data: res, expires: Date.now() + ttlMs });
+            }
+            
             return res;
         } catch (e: any) {
             if (e.response?.status === 429) {
@@ -34,7 +50,9 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
                 await sleep(1500); 
                 try {
                     const retryRes = await enqueueRequest(fetcher);
-                    cache.set(key, { data: retryRes, expires: Date.now() + ttlMs });
+                    if (retryRes.data && (!Array.isArray(retryRes.data) || retryRes.data.length > 0)) {
+                        cache.set(key, { data: retryRes, expires: Date.now() + ttlMs });
+                    }
                     return retryRes;
                 } catch (err) {
                     return cache.has(key) ? cache.get(key)!.data : { data: [] };
@@ -65,14 +83,25 @@ const formatLapTime = (seconds: number | null) => {
 };
 
 export const getHomeData = async () => {
-    const TARGET_YEAR = 2024;
-    const [driversRes, teamsRes, meetingsRes, sessionsRes, liveRes] = await Promise.all([
+    const currentYear = new Date().getFullYear();
+
+    // 1. Fetch live status, drivers, and teams first
+    const [liveRes, driversRes, teamsRes] = await Promise.all([
+        getCached('live_status', 30000, () => axios.get(`${OPENF1_BASE}/sessions?session_key=latest`)),
         getCached('drivers_std', 600000, () => axios.get(`${ERGAST_BASE}/current/driverStandings.json`)),
-        getCached('teams_std', 600000, () => axios.get(`${ERGAST_BASE}/current/constructorStandings.json`)),
-        getCached('meetings', 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=${TARGET_YEAR}`)),
-        getCached('sessions_race', 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=${TARGET_YEAR}&session_name=Race`)),
-        getCached('live_status', 30000, () => axios.get(`${OPENF1_BASE}/sessions?session_key=latest`))
+        getCached('teams_std', 600000, () => axios.get(`${ERGAST_BASE}/current/constructorStandings.json`))
     ]);
+
+    // 2. Fetch the calendar for the current year
+    let meetingsRes = await getCached(`meetings_${currentYear}`, 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=${currentYear}`));
+    let sessionsRes = await getCached(`sessions_race_${currentYear}`, 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=${currentYear}&session_name=Race`));
+
+    // FIX 2: If OpenF1 has no data for the current year, automatically fallback to a populated year
+    if (!meetingsRes?.data || meetingsRes.data.length === 0) {
+        console.warn(`No calendar data found for ${currentYear}. Falling back to 2024 calendar...`);
+        meetingsRes = await getCached('meetings_2024', 600000, () => axios.get(`${OPENF1_BASE}/meetings?year=2024`));
+        sessionsRes = await getCached('sessions_race_2024', 600000, () => axios.get(`${OPENF1_BASE}/sessions?year=2024&session_name=Race`));
+    }
 
     const driversData = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings || [];
     const drivers = driversData.map((d: any, idx: number) => ({
@@ -91,7 +120,6 @@ export const getHomeData = async () => {
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
-    console.log('Fetched home data:', meetingsRes);
     const races = (meetingsRes?.data || []).map((m: any) => {
         const race = sessionsRes?.data?.find((s: any) => s.meeting_key === m.meeting_key);
         return race ? { round: m.meeting_name, location: m.location, date: m.date_start, session_key: race.session_key } : null;
