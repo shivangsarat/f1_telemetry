@@ -5,7 +5,7 @@ import { useRaceStore } from '../store/useRaceStore';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
-const VIEWPORT_LAPS = 3;
+const VIEWPORT_LAPS = 2;
 
 const getTyreColor = (compound: string) => {
     const colors: Record<string, string> = { SOFT: '#FF3333', MEDIUM: '#FFFF00', HARD: '#FFFFFF', INTERMEDIATE: '#33CC33', WET: '#0066FF' };
@@ -74,8 +74,7 @@ export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
     
-    // Treat session as live if it's 'live', 'latest', or if the backend websocket is driving it
-    const isLive = sessionKey === 'live' || sessionKey === 'latest' || sessionKey === '9158'; 
+    const isLive = sessionKey === 'live' || sessionKey === 'latest';
     
     const connect = useRaceStore(state => state.connect);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
@@ -87,7 +86,7 @@ export const DriverProfile = () => {
 
     const [isAutoScroll, setIsAutoScroll] = useState(true);
     const [manualMin, setManualMin] = useState(0);
-    const [maxLapX, setMaxLapX] = useState(VIEWPORT_LAPS);
+    const [maxLapX, setMaxLapX] = useState(0);
 
     const chartRef1 = useRef<HTMLDivElement>(null);
     const chartRef2 = useRef<HTMLDivElement>(null);
@@ -106,6 +105,21 @@ export const DriverProfile = () => {
     const processedDataRef = useRef(processedData);
     useEffect(() => { processedDataRef.current = processedData; }, [processedData]);
 
+    // Legend state for initial rendering when cursor is not hovered
+    const [legendValues, setLegendValues] = useState({ lapX: '--', speed: '--', rpm: '--', throttle: '--', brake: '--', gear: '--' });
+
+    const updateLegendState = useCallback((d: any) => {
+        if (!d) return;
+        setLegendValues({
+            lapX: d.lapX.toFixed(3),
+            speed: d.speed ?? '--',
+            rpm: d.rpm ?? '--',
+            throttle: d.throttle ?? '--',
+            brake: d.brake ?? '--',
+            gear: d.gear ?? '--'
+        });
+    }, []);
+
     useLayoutEffect(() => {
         if (!chartRef1.current || !chartRef2.current) return;
         const width = chartRef1.current.clientWidth || 800;
@@ -114,14 +128,15 @@ export const DriverProfile = () => {
             const idx = u.cursor.idx;
             if (idx != null && processedDataRef.current[idx]) {
                 const d = processedDataRef.current[idx];
+                updateLegendState(d);
                 if (lapXRef1.current) lapXRef1.current.textContent = d.lapX.toFixed(3);
-                if (speedRef.current) speedRef.current.textContent = d.speed.toString();
-                if (rpmRef.current) rpmRef.current.textContent = d.rpm.toString();
+                if (speedRef.current) speedRef.current.textContent = String(d.speed);
+                if (rpmRef.current) rpmRef.current.textContent = String(d.rpm);
                 
                 if (lapXRef2.current) lapXRef2.current.textContent = d.lapX.toFixed(3);
-                if (throttleRef.current) throttleRef.current.textContent = d.throttle.toString();
-                if (brakeRef.current) brakeRef.current.textContent = d.brake.toString();
-                if (gearRef.current) gearRef.current.textContent = d.gear.toString();
+                if (throttleRef.current) throttleRef.current.textContent = String(d.throttle);
+                if (brakeRef.current) brakeRef.current.textContent = String(d.brake);
+                if (gearRef.current) gearRef.current.textContent = String(d.gear);
             }
         };
 
@@ -146,7 +161,7 @@ export const DriverProfile = () => {
         }, [[], [], [], []], chartRef2.current);
 
         return () => { plotInstance1.current?.destroy(); plotInstance2.current?.destroy(); };
-    }, []);
+    }, [updateLegendState]);
 
     useEffect(() => {
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
@@ -163,6 +178,22 @@ export const DriverProfile = () => {
         }
     }, [sessionKey, driverNumber, isLive]);
 
+    const snapToPlayhead = useCallback(() => {
+        if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
+        const targetX = isAutoScroll ? maxLapX : manualMin + (VIEWPORT_LAPS * 0.75);
+        const leftPx = plotInstance1.current.valToPos(targetX, 'x');
+        
+        plotInstance1.current.setCursor({ left: leftPx, top: -10 });
+        plotInstance2.current.setCursor({ left: leftPx, top: -10 });
+        
+        // Find closest raw data point for smooth legend tracking
+        const closest = processedDataRef.current.reduce((prev, curr) => 
+            Math.abs(curr.lapX - targetX) < Math.abs(prev.lapX - targetX) ? curr : prev
+        , processedDataRef.current[0]);
+        
+        updateLegendState(closest);
+    }, [isAutoScroll, maxLapX, manualMin, updateLegendState]);
+
     useEffect(() => {
         if (processedData.length > 0) {
             const xLaps = processedData.map((d: any) => d.lapX);
@@ -171,33 +202,29 @@ export const DriverProfile = () => {
             
             plotInstance1.current?.setData([xLaps, processedData.map((d: any) => d.speed), processedData.map((d: any) => d.rpm)]);
             plotInstance2.current?.setData([xLaps, processedData.map((d: any) => d.throttle), processedData.map((d: any) => d.brake), processedData.map((d: any) => d.gear)]);
-        }
-    }, [processedData]);
 
-    const snapToPlayhead = useCallback(() => {
-        if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
-        const playheadX = isAutoScroll ? maxLapX : currentSliderVal + (VIEWPORT_LAPS * 0.75);
-        const targetX = Math.min(playheadX, maxLapX);
-        const leftPx = plotInstance1.current.valToPos(targetX, 'x');
-        
-        plotInstance1.current.setCursor({ left: leftPx, top: -10 });
-        plotInstance2.current.setCursor({ left: leftPx, top: -10 });
-    }, [isAutoScroll, maxLapX]); 
+            updateLegendState(processedData[processedData.length - 1]);
+        }
+    }, [processedData, updateLegendState]);
 
     useEffect(() => {
-        let min = manualMin;
-        let max = manualMin + VIEWPORT_LAPS;
+        let min = 0;
+        let max = VIEWPORT_LAPS;
 
-        if (isAutoScroll) {
-            if (maxLapX < VIEWPORT_LAPS * 0.75) {
-                min = 0; 
-                max = VIEWPORT_LAPS;
-            } else {
-                const targetOffset = VIEWPORT_LAPS * 0.75;
-                max = maxLapX + (VIEWPORT_LAPS - targetOffset);
-                min = max - VIEWPORT_LAPS;
-            }
+        if (maxLapX <= VIEWPORT_LAPS) {
+            // Start: 0 to VIEWPORT_LAPS, pointer moves naturally from left to right
+            min = 0;
+            max = VIEWPORT_LAPS;
+        } else if (isAutoScroll) {
+            // When enough data to fill 75% (VIEWPORT_LAPS * 0.75), lock pointer at 75% and shift x-axis left
+            const targetOffset = VIEWPORT_LAPS * 0.75;
+            max = maxLapX + (VIEWPORT_LAPS - targetOffset);
+            min = max - VIEWPORT_LAPS;
+        } else {
+            min = manualMin;
+            max = manualMin + VIEWPORT_LAPS;
         }
+
         plotInstance1.current?.setScale('x', { min, max });
         plotInstance2.current?.setScale('x', { min, max });
 
@@ -206,6 +233,7 @@ export const DriverProfile = () => {
 
     const maxAllowedScroll = Math.max(0, maxLapX + (VIEWPORT_LAPS * 0.25) - VIEWPORT_LAPS);
     const currentSliderVal = isAutoScroll ? maxAllowedScroll : manualMin;
+    const hasEnoughDataToScroll = maxLapX > VIEWPORT_LAPS;
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
@@ -318,9 +346,9 @@ export const DriverProfile = () => {
                     <div ref={chartRef1} className="w-full min-h-[300px]"></div>
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
-                        Timeline Pos: <span ref={lapXRef1} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#00ff00]">■</span> Speed: <span ref={speedRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#ff00ff]">■</span> RPM: <span ref={rpmRef} className="text-white font-bold">--</span>
+                        Timeline Pos: <span ref={lapXRef1} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#00ff00]">■</span> Speed: <span ref={speedRef} className="text-white font-bold">{legendValues.speed}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#ff00ff]">■</span> RPM: <span ref={rpmRef} className="text-white font-bold">{legendValues.rpm}</span>
                     </div>
                 </div>
                 
@@ -329,27 +357,33 @@ export const DriverProfile = () => {
                     <div ref={chartRef2} className="w-full min-h-[250px]"></div>
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
-                        Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">--</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                        <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">--</span>
+                        Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">{legendValues.throttle}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">{legendValues.brake}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">{legendValues.gear}</span>
                     </div>
                 </div>
 
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 flex flex-col gap-6">
-                    <div className="flex items-center gap-4">
-                        <span className="text-xs text-gray-500 uppercase font-bold w-20">Timeline</span>
-                        <input 
-                            type="range" min={0} max={maxAllowedScroll} step={0.1} value={currentSliderVal}
-                            onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                setManualMin(val);
-                                setIsAutoScroll(val >= maxAllowedScroll - 0.2);
-                            }}
-                            className={`w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer ${isLiveTracking ? 'accent-green-500' : 'accent-blue-500'}`}
-                        />
-                        <span className="text-xs text-gray-400 w-24 text-right font-bold">Lap {currentSliderVal.toFixed(1)}</span>
-                    </div>
+                    {hasEnoughDataToScroll ? (
+                        <div className="flex items-center gap-4">
+                            <span className="text-xs text-gray-500 uppercase font-bold w-20">Timeline</span>
+                            <input 
+                                type="range" min={0} max={maxAllowedScroll} step={0.1} value={currentSliderVal}
+                                onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    setManualMin(val);
+                                    setIsAutoScroll(val >= maxAllowedScroll - 0.2);
+                                }}
+                                className={`w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer ${isLiveTracking ? 'accent-green-500' : 'accent-blue-500'}`}
+                            />
+                            <span className="text-xs text-gray-400 w-24 text-right font-bold">Lap {currentSliderVal.toFixed(1)}</span>
+                        </div>
+                    ) : (
+                        <div className="text-center text-xs text-gray-500 uppercase font-bold tracking-widest py-1">
+                            Collecting telemetry data (Auto-filling viewport...)
+                        </div>
+                    )}
 
                     <div className="flex flex-wrap items-center justify-between border-t border-gray-800 pt-4 px-4 bg-gray-800/20 rounded-lg mt-2">
                         <div className="flex items-center gap-4">

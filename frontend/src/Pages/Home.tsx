@@ -67,7 +67,8 @@ export const Home = () => {
             <div className="flex justify-between items-center bg-gray-900 p-4 rounded-xl border border-gray-800">
                 <h1 className="text-2xl font-bold uppercase tracking-wider text-red-500">F1 Dashboard</h1>
                 <button 
-                    onClick={() => navigate(`/race/${data.liveStatus.session_key}`)}
+                    // onClick={() => navigate(`/race/${data.liveStatus.session_key}`)}
+                    onClick={() => navigate(`/race/live`)}
                     disabled={!data.liveStatus.isLive}
                     className={`px-6 py-2 rounded font-bold uppercase tracking-widest transition ${
                         data.liveStatus.isLive ? 'bg-red-600 hover:bg-red-500 text-white animate-pulse' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
