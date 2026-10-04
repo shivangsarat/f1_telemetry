@@ -205,17 +205,28 @@ export const getRaceDetails = async (sessionKey: string) => {
     await sleep(400);
     const dRes = await getCached(`drivers_${sessionKey}`, 86400000, () => openF1Request(`${OPENF1_BASE}/drivers?session_key=${sessionKey}`));
     await sleep(400);
-    const pRes = await getCached(`pits_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/pit_stops?session_key=${sessionKey}`));
+    const pRes = await getCached(`pits_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/pit?session_key=${sessionKey}`));
     await sleep(400);
     const lRes = await getCached(`laps_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${sessionKey}`));
     await sleep(400);
     const sRes = await getCached(`stints_${sessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}`));
+    await sleep(400);
+    const driversStd = await getCached('drivers_std', 600000, () => openF1Request(`${OPENF1_BASE}/championship_drivers?session_key=${sessionKey}`));
 
     const weather = wRes.data[wRes.data.length - 1] || null;
     
     const lapsFromLaps = Math.max(...(lRes.data || []).map((l: any) => l.lap_number || 0), 0);
     const lapsFromStints = Math.max(...(sRes.data || []).map((s: any) => s.lap_end || s.lap_start || 0), 0);
     const maxRaceLap = Math.max(lapsFromLaps, lapsFromStints, 1);
+
+    const championshipDrivers = Array.isArray(driversStd?.data)
+    ? driversStd.data
+    : [];
+
+    const getDriverStandings = (driverNumber: number) => {
+        const driverStanding = championshipDrivers.find((d: any) => Number(d.driver_number) === driverNumber);
+        return driverStanding ? { position: driverStanding.position_start, pointsStart: driverStanding.points_start, points: driverStanding.points_current, positionEnd: driverStanding.position_end } : { position: '-', pointsStart: '-', points: '-', positionEnd: '-' };
+    };
     
     const latestPositions = (posRes.data || []).reduce((acc: any, c: any) => {
         if (!acc[c.driver_number] || new Date(c.date).getTime() > new Date(acc[c.driver_number].date).getTime()) acc[c.driver_number] = c;
@@ -248,6 +259,48 @@ export const getRaceDetails = async (sessionKey: string) => {
     };
 
     const driverList = isRace ? Object.values(iRes.data.reduce((acc: any, c: any) => ({ ...acc, [c.driver_number]: c }), {})) : dRes.data;
+
+    console.log('driverList', driverList);
+
+    // Pre-compute session-wide maximums to avoid recalculating inside the loop
+    const compoundMaxLaps: Record<string, number> = {};
+    if (sRes?.data) {
+        sRes.data.forEach((s: { compound: string; lap_end: any; lap_start: number; }) => {
+            const comp = s.compound || 'UNKNOWN';
+            const sLen = (s.lap_end || 999) - s.lap_start + 1;
+            if (!compoundMaxLaps[comp] || sLen > compoundMaxLaps[comp]) {
+                compoundMaxLaps[comp] = sLen;
+            }
+        });
+    }
+
+    const driverMaxSpeeds: Record<string, number> = {};
+    if (lRes?.data) {
+        lRes.data.forEach((l: { st_speed: number; driver_number: string | number; }) => {
+            const speed = l.st_speed || 0;
+            if (speed > (driverMaxSpeeds[l.driver_number] || 0)) {
+                driverMaxSpeeds[l.driver_number] = speed;
+            }
+        });
+    }
+    const sessionSpeedsArray = Object.values(driverMaxSpeeds).sort((a, b) => b - a);
+    const benchmarkSpeed = sessionSpeedsArray[0] || 0;
+
+    const positionStandings = driverList.map((row: any) => {
+        const dNum = Number(row.driver_number);
+        const driverInfo = dRes.data.find((d: any) => Number(d.driver_number) === dNum) || {};
+        const pos = latestPositions[dNum]?.position || initialPositions[dNum]?.position || 99;
+        
+        // Extract short acronym (e.g. "VER", "RUS")
+        const nameAcronym = driverInfo.name_acronym || (driverInfo.name ? driverInfo.name.split(' ').pop().substring(0, 3).toUpperCase() : 'UNK');
+        
+        // Clean up interval string
+        let intervalStr = row.interval ? String(row.interval) : (row.gap_to_leader ? String(row.gap_to_leader) : '0.000');
+        if (!intervalStr.endsWith('s') && !intervalStr.includes('LAP')) intervalStr += 's';
+        if (!intervalStr.startsWith('+') && intervalStr !== '0.000s' && !intervalStr.includes('LAP')) intervalStr = '+' + intervalStr;
+
+        return { dNum, pos, name: nameAcronym, interval: intervalStr };
+    }).sort((a: any, b: any) => a.pos - b.pos);
     
     let results = driverList.map((row: any) => {
         const dNum = Number(row.driver_number);
@@ -293,6 +346,79 @@ export const getRaceDetails = async (sessionKey: string) => {
             else if (maxRaceLap > 5 && (maxRaceLap - driverMaxLapCompleted) > 4 && !isLapped) status = 'DNF';
         }
 
+        // 1. Stint Analytics
+        const activeStintInfo = dStints.length > 0 ? dStints[dStints.length - 1] : null;
+        const currentCompound = activeStintInfo?.compound || 'UNKNOWN';
+        const stintStartLap = activeStintInfo?.lap_start || 1;
+        const currentStintLength = Math.max(0, driverMaxLapStarted - stintStartLap + 1);
+        
+        // Estimate tyre cliff (fallback to baselines if session data is sparse)
+        let maxLapsOnCompound = compoundMaxLaps[currentCompound] || 0;
+        if (maxLapsOnCompound < 5) maxLapsOnCompound = currentCompound === 'SOFT' ? 20 : currentCompound === 'MEDIUM' ? 30 : 40;
+
+        // 2. Pace Drop-off (Degradation)
+        const currentStintLaps = dLapsCompleted.filter((l: { lap_number: number; }) => l.lap_number >= stintStartLap);
+        let paceDropOff = 0;
+        if (currentStintLaps.length > 2) {
+            const firstRepLap = currentStintLaps[1].lap_duration; // Compare from lap 2 to avoid out-lap anomalies
+            const latestLap = currentStintLaps[currentStintLaps.length - 1].lap_duration;
+            paceDropOff = (latestLap - firstRepLap) / (currentStintLaps.length - 2);
+        }
+
+        // 3. Speed Trap Ranking
+        const driverSpeed = driverMaxSpeeds[dNum] || 0;
+        const speedRank = sessionSpeedsArray.indexOf(driverSpeed) + 1;
+        const speedDeficit = benchmarkSpeed - driverSpeed;
+
+        // 4. Consistency Score
+        const last5Laps = dLapsCompleted.slice(-5).map((l: { lap_duration: any; }) => l.lap_duration);
+        let stdDev = 0;
+        if (last5Laps.length > 1) {
+            const mean = last5Laps.reduce((a: any, b: any) => a + b, 0) / last5Laps.length;
+            const variance = last5Laps.reduce((a: number, b: number) => a + Math.pow(b - mean, 2), 0) / last5Laps.length;
+            stdDev = Math.sqrt(variance);
+        }
+
+        const currentChampionStanding = getDriverStandings(dNum);
+
+        const analytics = {
+            currentCompound,
+            currentStintLength,
+            maxLapsOnCompound,
+            paceDropOff: paceDropOff || 0,
+            driverSpeed,
+            speedRank: speedRank > 0 ? speedRank : '-',
+            speedDeficit: Math.max(0, speedDeficit),
+            consistencyStdDev: stdDev || 0
+        };
+
+        const myRankIdx = positionStandings.findIndex((p: { dNum: number; }) => p.dNum === dNum);
+        const targetDriver = myRankIdx > 0 ? positionStandings[myRankIdx - 1] : null;
+        const threatDriver = myRankIdx !== -1 && myRankIdx < positionStandings.length - 1 ? positionStandings[myRankIdx + 1] : null;
+        const liveBattle = { target: targetDriver, threat: threatDriver };
+
+        // --- LATEST PIT STOP (With Fallback Inference) ---
+        let latestPit = null;
+        if (dPits && dPits.length > 0) {
+            const p = dPits[dPits.length - 1];
+            latestPit = { 
+                lap: p.lap, 
+                stop_duration: p.stop_duration, 
+                lane_duration: p.lane_duration, 
+                pit_duration: p.pit_duration, 
+                is_inferred: false 
+            };
+        } else if (dStints && dStints.length > 1) {
+            const lastStint = dStints[dStints.length - 1];
+            latestPit = { 
+                lap: lastStint.start || lastStint.lap_start, 
+                stop_duration: null, 
+                lane_duration: null, 
+                pit_duration: null, 
+                is_inferred: true 
+            };
+        }
+
         return {
             driver_number: dNum,
             name: driver.full_name || driver.name_acronym || `Unknown (${dNum})`,
@@ -319,7 +445,11 @@ export const getRaceDetails = async (sessionKey: string) => {
                 seg1: lastLapData.segments_sector_1 || [], seg2: lastLapData.segments_sector_2 || [], seg3: lastLapData.segments_sector_3 || []
             } : null,
             stints, total_laps: maxRaceLap, official_position: officialPosition, pos_change: posChange, status,
-            driver_laps: driverMaxLapCompleted
+            driver_laps: driverMaxLapCompleted,
+            analytics,
+            liveBattle,
+            latestPit,
+            championship: currentChampionStanding
         };
     });
 

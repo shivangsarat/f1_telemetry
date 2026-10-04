@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { getFlagTheme, getTyreColor } from '../Utils/helpers';
 import { SectorBlock } from './TelemetryWidgets';
+import { useRaceStore } from '../store/useRaceStore';
 
 export const WeatherCard = React.memo(({ weather }: { weather: any }) => (
     <div className="bg-gray-900 rounded-xl p-5 border border-gray-800 flex flex-col justify-center">
@@ -64,32 +65,261 @@ export const RaceControlWidget = React.memo(({ messages }: { messages: any[] }) 
     );
 });
 
+// --- HELPER: Mid-lap progression for smooth timeline animation ---
+const calculatePartialLapProgress = (driver: any) => {
+    if (driver.status === 'Finished' || driver.status === 'DNF' || driver.status?.toUpperCase().includes('OUT') || driver.status === 'Retired') return 0;
+    let fraction = 0;
+    const seg1 = driver.segments_sector_1 || driver.seg1;
+    const seg2 = driver.segments_sector_2 || driver.seg2;
+    const seg3 = driver.segments_sector_3 || driver.seg3;
+
+    if (seg3 && seg3.length > 0) fraction = 0.66 + (Math.min(seg3.length, 10) / 10) * 0.33;
+    else if (seg2 && seg2.length > 0) fraction = 0.33 + (Math.min(seg2.length, 10) / 10) * 0.33;
+    else if (seg1 && seg1.length > 0) fraction = (Math.min(seg1.length, 10) / 10) * 0.33;
+    else {
+        if (driver.s2) fraction = 0.66;
+        else if (driver.s1) fraction = 0.33;
+        else fraction = 0.05; 
+    }
+    return Math.min(fraction, 0.99); 
+};
+
+// // --- HELPER: Clean interval strings ---
+// const getIntervalStr = (d: any) => {
+//     let val = d.interval ? String(d.interval) : (d.gap_to_leader ? String(d.gap_to_leader) : '0.000s');
+//     val = val.replace(/\++/g, '+').replace(/s+/g, 's'); // Clean double chars
+//     const upVal = val.toUpperCase();
+//     if (!val.startsWith('+') && !upVal.includes('LAP') && val !== '0.000s' && upVal !== 'LEADER') val = '+' + val;
+//     if (!val.endsWith('s') && !upVal.includes('LAP') && upVal !== 'LEADER') val = val + 's';
+//     return val;
+// };
+
+// --- HELPER: Standard F1 Points Table ---
+const getF1Points = (position: number, isSprint: boolean = false) => {
+    const pos = Number(position);
+    if (isNaN(pos) || pos > (isSprint ? 8 : 10)) return 0;
+    
+    if (isSprint) {
+        const sprintPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+        return sprintPoints[pos - 1] || 0;
+    } else {
+        const racePoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+        return racePoints[pos - 1] || 0;
+    }
+};
+
+// --- COMPONENT: Championship Points Widget (Replaces Live Battles) ---
+export const DriverChampionshipWidget = ({ driver, isSprint = false }: { driver: any, isSprint?: boolean }) => {
+    // 1. Current points before this race/session (pull from backend or default to 0)
+    const pointsBefore = driver.championship?.pointsStart ?? 0;
+    
+    // 2. Determine live or final position
+    const currentPos = driver.position || driver.official_position || 99;
+    const isFinished = driver.status === 'Finished' || driver.status === 'Classified';
+    
+    // 3. Points gained for current/finishing position
+    const pointsAddition = getF1Points(currentPos, isSprint);
+    
+    // 4. Points after race (if finished, add points; if live, show projected total)
+    const pointsAfter = isFinished ? driver.championship?.points : pointsBefore + pointsAddition;
+
+    return (
+        <div className="flex flex-col gap-1.5">
+            <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Championship Points</h3>
+            <div className="bg-gray-800/40 p-2 rounded-md border border-gray-700/60 shadow-inner flex flex-col gap-1 text-xs">
+                
+                {/* Pre-Race Points */}
+                <div className="flex justify-between items-center">
+                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">Before Race</span>
+                    <span className="font-bold text-gray-300 font-mono">{pointsBefore} PTS</span>
+                </div>
+
+                {/* Projected Addition for Current Position */}
+                <div className="flex justify-between items-center border-t border-gray-700/50 pt-1 mt-0.5">
+                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">
+                        P{currentPos} Addition
+                    </span>
+                    <span className="font-bold text-green-400 font-mono">
+                        +{pointsAddition} PTS
+                    </span>
+                </div>
+
+                {/* Total Points After Race */}
+                <div className="flex justify-between items-center border-t border-gray-700/50 pt-1 mt-0.5">
+                    <span className="text-gray-300 uppercase tracking-widest text-[9px] font-bold">
+                        {isFinished ? 'Final Points' : 'Projected Total'}
+                    </span>
+                    <span className="font-bold text-white font-mono text-sm">
+                        {pointsAfter} PTS
+                    </span>
+                </div>
+
+            </div>
+        </div>
+    );
+};
+
+
+const DriverAnalyticsWidget = ({ analytics, driver }: { analytics: any, driver: any }) => {
+    if (!analytics) return <div className="text-xs text-gray-500 italic h-full flex items-center pl-6 border-l border-gray-800/50">Analytics loading...</div>;
+
+    const { currentStintLength, maxLapsOnCompound, paceDropOff, driverSpeed, speedRank, speedDeficit, consistencyStdDev } = analytics;
+
+    return (
+        <div className="flex flex-col justify-center h-full pl-6 border-l border-gray-800/50">
+            <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-2">Stint & Performance Analytics</h3>
+            
+            <div className="bg-gray-800/40 rounded-md border border-gray-700/60 flex flex-col text-xs shadow-inner">
+                
+                {/* Row 1: Tyre Age & Pace Drop-off */}
+                <div className="flex justify-between items-center px-3 py-1.5 border-b border-gray-700/60">
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-gray-400 uppercase font-bold w-20 text-[10px]">Tyre Age</span>
+                        <span className="text-white font-bold">
+                            {currentStintLength} Laps <span className="text-gray-300 text-[11px] font-normal ml-1">/ Est. {maxLapsOnCompound}</span>
+                        </span>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-gray-400 uppercase font-bold text-[10px]">Pace Drop</span>
+                        <span className={`font-bold font-mono ${paceDropOff > 0 ? 'text-yellow-400' : 'text-green-400'}`}>
+                            {paceDropOff > 0 ? '+' : ''}{paceDropOff.toFixed(3)}s
+                        </span>
+                    </div>
+                </div>
+
+                {/* Row 2: Speed Trap & Deficit */}
+                <div className="flex justify-between items-center px-3 py-1.5 border-b border-gray-700/60">
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-gray-400 uppercase font-bold w-20 text-[10px]">Speed Trap</span>
+                        <span className="text-purple-400 font-bold">
+                            {driverSpeed || driver.st_speed || 0} km/h <span className="text-gray-300 text-[11px] font-normal ml-1">(P{speedRank})</span>
+                        </span>
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-gray-400 uppercase font-bold text-[10px]">Vs Best</span>
+                        <span className="text-gray-200 font-bold font-mono">
+                            {speedDeficit > 0 ? `-${speedDeficit.toFixed(1)} km/h` : 'Leader'}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Row 3: Consistency */}
+                <div className="flex justify-between items-center px-3 py-1.5">
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-gray-400 uppercase font-bold w-20 text-[10px]">Consistency</span>
+                        <span className="text-white font-bold font-mono">± {consistencyStdDev.toFixed(3)}s</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-gray-400 uppercase font-bold text-[10px]">Var.</span>
+                        <div className="w-16 h-1.5 bg-gray-900 rounded-full overflow-hidden flex items-center justify-end border border-gray-700/50">
+                            <div 
+                                className={`h-full transition-all duration-500 ${consistencyStdDev < 0.2 ? 'bg-green-500' : consistencyStdDev < 0.5 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                style={{ width: `${Math.max(10, 100 - (consistencyStdDev * 100))}%` }}
+                            ></div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    );
+};
+
 export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode }: { driver: any, isLive: boolean, isRaceMode: boolean }) => {
     const showCurrent = isLive && !isRaceMode;
     const displaySectors = isRaceMode ? driver.last_sectors : driver.best_sectors;
 
+    
+
+    const { pit_stops } = driver;
+
+    // --- TIMELINE SCALE LOGIC ---
+    const allDrivers = useRaceStore(state => state.intervals) || [];
+    const maxRaceLapStore = useRaceStore(state => state.maxRaceLap);
+    
+    // Check driver status to control the progress bar behavior
+    const isDNF = driver.status === 'DNF' || driver.status?.toUpperCase().includes('OUT') || driver.status === 'Retired';
+    const isFinished = driver.status === 'Finished' || (!isLive && !isDNF);
+
+    const currentLeaderLap = allDrivers.length > 0 ? Math.max(...allDrivers.map(d => d.completed_laps || 0)) : 1;
+    const globalMaxLap = (maxRaceLapStore && maxRaceLapStore > 0) ? maxRaceLapStore : currentLeaderLap;
+    
+    const partialLap = (isLive && !isFinished && !isDNF) ? calculatePartialLapProgress(driver) : 0;
+    const currentDistance = (driver.completed_laps || 0) + partialLap;
+
+    let scaleMax = globalMaxLap;
+    if (isFinished) {
+        scaleMax = currentDistance; 
+    } else if (!maxRaceLapStore) {
+        scaleMax = isDNF ? globalMaxLap : Math.max(currentDistance, 1);
+    } else {
+        scaleMax = maxRaceLapStore;
+    }
+    scaleMax = Math.max(scaleMax, 1); // Safety floor
+
+    const latestPit = pit_stops && pit_stops.length > 0 ? pit_stops[pit_stops.length - 1] : null;
+
+
     return (
         <div className="p-4 ml-8 border-l-2 border-gray-700 text-xs text-gray-300 flex flex-col gap-4 bg-gray-900/80 rounded-r border-t border-b border-r border-gray-800">
-            <div className="flex flex-wrap items-start gap-12 text-sm">
-                <div className="flex flex-col gap-1">
-                    <div>
-                        <span className="font-bold text-gray-400 block mb-1">Best Lap:</span> 
-                        <span className="font-mono text-white text-lg font-bold">{driver.best_lap}</span>
-                    </div>
-                    {(!isRaceMode && driver.best_sectors) && <SectorBlock sectors={driver.best_sectors} />}
-                </div>
-                
-                {(isRaceMode || showCurrent) && (
-                    <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
+            {/* --- TOP SECTION GRID: 3 Columns --- */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+                {/* LEFT COLUMN (Width: 4 cols): Best Lap & Last Lap */}
+                <div className="lg:col-span-4 flex flex-wrap items-start gap-12 text-sm">
+                    <div className="flex flex-col gap-1">
                         <div>
-                            <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
-                            <span className="font-mono text-white text-lg font-bold">
-                                {(driver.last_lap === '-' && showCurrent) ? 'In Progress' : driver.last_lap}
-                            </span>
+                            <span className="font-bold text-gray-400 block mb-1">Best Lap:</span> 
+                            <span className="font-mono text-white text-lg font-bold">{driver.best_lap}</span>
                         </div>
-                        {displaySectors && <SectorBlock sectors={displaySectors} />}
+                        {(!isRaceMode && driver.best_sectors) && <SectorBlock sectors={driver.best_sectors} />}
                     </div>
-                )}
+                    
+                    {(isRaceMode || showCurrent) && (
+                        <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
+                            <div>
+                                <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
+                                <span className="font-mono text-white text-lg font-bold">
+                                    {(driver.last_lap === '-' && showCurrent) ? 'In Progress' : driver.last_lap}
+                                </span>
+                            </div>
+                            {displaySectors && <SectorBlock sectors={displaySectors} />}
+                        </div>
+                    )}
+                </div>
+                {/* CENTER COLUMN (Width: 3 cols): Live Battles & Latest Pit Summary */}
+                <div className="lg:col-span-3 flex flex-col justify-center gap-3 pl-4 pr-2 border-l border-gray-800/50">
+                    
+                    {/* CHAMPIONSHIP POINTS MODULE (Replaces Live Battles) */}
+                    <DriverChampionshipWidget driver={driver} isSprint={false} />
+
+                    {/* LATEST PIT MODULE */}
+                    <div className="flex flex-col gap-1.5">
+                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Latest Pit Stop</h3>
+                        <div className="bg-gray-800/40 p-2 rounded-md border border-gray-700/60 shadow-inner flex flex-col gap-1 text-xs">
+                            {latestPit ? (
+                                <>
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-gray-300 font-bold uppercase tracking-widest text-[10px]">Lap {latestPit.lap}</span>
+                                        <span className="font-bold text-white font-mono">{latestPit.pit_duration ? `${latestPit.pit_duration.toFixed(2)}s` : 'N/A'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-[10px] border-t border-gray-700/50 pt-1 mt-0.5">
+                                        <span className="text-gray-500 font-bold">Box: <strong className="text-gray-300 font-mono ml-0.5">{latestPit.stop_duration ? `${latestPit.stop_duration.toFixed(2)}s` : '-'}</strong></span>
+                                        <span className="text-gray-500 font-bold">Lane: <strong className="text-gray-300 font-mono ml-0.5">{latestPit.lane_duration ? `${latestPit.lane_duration.toFixed(2)}s` : '-'}</strong></span>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="text-center text-gray-500 text-[10px] font-bold uppercase tracking-widest py-2">
+                                    No Stops
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* RIGHT COLUMN: New Analytics Widget */}
+                <div className="lg:col-span-5">
+                    <DriverAnalyticsWidget analytics={driver.analytics} driver={driver} />
+                </div>
             </div>
 
             <div className="flex items-center gap-4 pt-6 pb-8">
@@ -116,19 +346,30 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode }: { d
                     })}
                 </div>
             </div>
-            
-            {driver.pit_stops && driver.pit_stops.length > 0 && (
+
+            {((driver.pit_stops && driver.pit_stops.length > 0) || (driver.stints && driver.stints.length > 1)) && (
                 <div className="flex items-start gap-4 pt-4 border-t border-gray-800">
                     <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider mt-1">Pits:</span>
                     <div className="flex flex-wrap gap-2">
-                        {driver.pit_stops.map((p: any, i: number) => (
-                            <div key={i} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px]">
-                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Lap {p.lap}</span>
-                                {p.stop_duration && <span>Box: <strong className="text-white">{p.stop_duration.toFixed(2)}s</strong></span>}
-                                {p.lane_duration && <span>Lane: <strong className="text-gray-200">{p.lane_duration.toFixed(2)}s</strong></span>}
-                                {(!p.stop_duration && !p.lane_duration && p.pit_duration) && <span>Time: <strong className="text-white">{p.pit_duration.toFixed(2)}s</strong></span>}
-                            </div>
-                        ))}
+                        {driver.pit_stops && driver.pit_stops.length > 0 ? (
+                            // 1. Show actual pit stops if the API provided them
+                            driver.pit_stops.map((p: any, i: number) => (
+                                <div key={i} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px]">
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Lap {p.lap}</span>
+                                    {p.stop_duration && <span>Box: <strong className="text-white">{p.stop_duration.toFixed(2)}s</strong></span>}
+                                    {p.lane_duration && <span>Lane: <strong className="text-gray-200">{p.lane_duration.toFixed(2)}s</strong></span>}
+                                    {(!p.stop_duration && !p.lane_duration && p.pit_duration) && <span>Time: <strong className="text-white">{p.pit_duration.toFixed(2)}s</strong></span>}
+                                </div>
+                            ))
+                        ) : (
+                            // 2. Infer pit stops from tyre changes if API data is empty
+                            driver.stints.slice(1).map((s: any, i: number) => (
+                                <div key={`inferred-${i}`} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px] justify-center">
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Lap {s.start}</span>
+                                    <span className="text-gray-500 italic text-[9px]">*Duration N/A</span>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             )}

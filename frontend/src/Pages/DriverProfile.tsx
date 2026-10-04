@@ -409,7 +409,7 @@ export const DriverProfile = () => {
 
                             <div className="max-h-48 overflow-y-auto pr-1 flex flex-col gap-2 custom-scrollbar">
                                 {activeData.laps && activeData.laps.length > 0 ? (
-                                    activeData.laps.map((lap: any) => {
+                                    [...activeData.laps].reverse().map((lap: any) => {
                                         const lapDuration = lap.lap_duration;
                                         const bestDuration = bestLapObj?.lap_duration;
                                         const delta = (lapDuration && bestDuration) ? lapDuration - bestDuration : null;
@@ -433,7 +433,7 @@ export const DriverProfile = () => {
                                                     <span className="font-bold w-12 text-gray-300">L{lap.lap_number}</span>
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getTyreColor(tyreCompound) }} title={tyreCompound}></div>
                                                     <span className="text-white font-bold">{formatLapTime(lapDuration)}</span>
-                                                    <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-500'}`}>
+                                                    <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
                                                         {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
                                                     </span>
                                                 </div>
@@ -441,9 +441,9 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <div className="flex flex-col gap-1 w-32">
                                                         <div className="flex justify-between text-[10px] text-gray-500">
-                                                            <span>S1: {lap.duration_sector_1 ? lap.duration_sector_1.toFixed(2) : '-'}</span>
-                                                            <span>S2: {lap.duration_sector_2 ? lap.duration_sector_2.toFixed(2) : '-'}</span>
-                                                            <span>S3: {lap.duration_sector_3 ? lap.duration_sector_3.toFixed(2) : '-'}</span>
+                                                            <span className="text-gray-200">S1: {lap.duration_sector_1 ? lap.duration_sector_1.toFixed(2) : '-'}</span>
+                                                            <span className="text-gray-200">S2: {lap.duration_sector_2 ? lap.duration_sector_2.toFixed(2) : '-'}</span>
+                                                            <span className="text-gray-200">S3: {lap.duration_sector_3 ? lap.duration_sector_3.toFixed(2) : '-'}</span>
                                                         </div>
                                                         {renderMinisectors(lap.segments_sector_1 || lap.seg1)}
                                                     </div>

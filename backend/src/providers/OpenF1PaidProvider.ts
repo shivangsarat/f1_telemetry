@@ -34,6 +34,7 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
         });
         
         this.accessToken = response.data.access_token;
+        console.log("accessToken", this.accessToken);
         const expiresIn = parseInt(response.data.expires_in, 10) || 3600;
         this.tokenExpiryTime = Date.now() + (expiresIn - 300) * 1000;
     }

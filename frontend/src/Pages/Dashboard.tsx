@@ -47,6 +47,10 @@ export const Dashboard = () => {
     const activeMaxLap = isLive ? liveMaxLap : histData.maxRaceLap;
     const activeRaceControl = isLive ? liveRc : histRaceControl;
 
+    console.log('activeResults', activeResults);
+
+    console.log('activeRaceControl', activeRaceControl);
+
     useEffect(() => {
         if (isLive && activeRaceControl.length > 0) {
             const newest = activeRaceControl[0];
@@ -123,7 +127,7 @@ export const Dashboard = () => {
     ], [isRaceMode, sessionKey]);
 
     return (
-        <div className="flex h-screen bg-black text-white p-4 gap-6 overflow-hidden relative">
+        <div className="flex min-h-screen bg-black text-white p-4 gap-6 overflow-hidden relative">
             {latestToast && (
                 <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-red-600 text-white px-6 py-3 rounded-full shadow-2xl font-bold uppercase tracking-wider animate-bounce flex items-center gap-3 border border-red-400">
                     ⚠️ {latestToast.message}
