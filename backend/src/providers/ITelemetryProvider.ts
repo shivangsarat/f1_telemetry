@@ -10,6 +10,9 @@ export interface DriverTelemetryPoint {
 export interface TelemetryCallbacks {
     onTelemetry: (driverNumber: number, point: DriverTelemetryPoint) => void;
     onRaceControl?: (message: any) => void;
+    onInterval?: (message: any) => void;
+    onPosition?: (message: any) => void;
+    onWeather?: (message: any) => void;
     onError?: (err: any) => void;
 }
 

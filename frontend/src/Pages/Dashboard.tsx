@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 import { useRaceStore } from '../store/useRaceStore';
 import { WeatherCard, SessionBestsCard, RaceControlWidget, DriverExpandedRow } from '../Components/DashboardWidgets';
-import { getTyreColor } from '../Utils/helpers';
+import { getTyreColor, computeLiveChampionship } from '../Utils/helpers';
 
 export const Dashboard = () => {
     const { sessionKey } = useParams();
@@ -74,12 +74,19 @@ export const Dashboard = () => {
         });
     }, [isLiveSession, liveResults, histData.results]);
 
+    
+
     // Fallback logic for secondary widgets
     const activeWeather = (isLiveSession && liveWeather) ? liveWeather : histData.weather;
     const activeBests = (isLiveSession && liveBests) ? liveBests : histData.sessionBests;
     const isRaceMode = (isLiveSession && liveResults && liveResults.length > 0) ? liveIsRace : histData.isRace;
     const activeMaxLap = (isLiveSession && liveMaxLap > 0) ? liveMaxLap : histData.maxRaceLap;
     const activeRaceControl = (isLiveSession && liveRc && liveRc.length > 0) ? liveRc : histRaceControl;
+
+    const liveStandings = useMemo(() => {
+        if (!isLiveSession || !isRaceMode) return null;
+        return computeLiveChampionship(activeResults, false);
+    }, [activeResults, isLiveSession, isRaceMode]);
 
     // Toast Notification Handler
     useEffect(() => {
@@ -143,7 +150,14 @@ export const Dashboard = () => {
             } 
         },
         { header: 'Laps', accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{row.driver_laps}</span> },
-        { header: isRaceMode ? 'Interval' : 'Best Lap', accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{isRaceMode ? row.interval : row.best_lap}</span> },
+        { 
+            header: isRaceMode ? 'Time' : 'Best Lap', 
+            accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{isRaceMode ? row.total_time : row.best_lap}</span> 
+        },
+        { 
+            header: 'Interval', 
+            accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{row.interval}</span> 
+        },
         { 
             header: isRaceMode ? 'Gap' : 'Gap to P1', 
             accessor: (row: any) => {
@@ -179,13 +193,7 @@ export const Dashboard = () => {
 
     return (
         <div className="flex min-h-screen bg-black text-white p-4 gap-6 overflow-hidden relative">
-            {latestToast && (
-                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-red-600 text-white px-6 py-3 rounded-full shadow-2xl font-bold uppercase tracking-wider animate-bounce flex items-center gap-3 border border-red-400">
-                    ⚠️ {latestToast.message || latestToast.text}
-                </div>
-            )}
-
-            <RaceControlWidget messages={activeRaceControl} />
+            <RaceControlWidget messages={activeRaceControl} latestToast={latestToast} />
 
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
                 <div className="flex justify-between items-center">
@@ -241,7 +249,7 @@ export const Dashboard = () => {
                                 data={activeResults || []} 
                                 columns={driverColumns} 
                                 getRowKey={(row: any) => row.driver_number}
-                                expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} />}
+                                expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={liveStandings} />}
                             />
                         )}
                     </div>

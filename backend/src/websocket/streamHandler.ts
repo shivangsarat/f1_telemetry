@@ -7,15 +7,10 @@ import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 export const setupWebSocket = async (server: any) => {
     const wss = new WebSocketServer({ server });
 
-    // Tracks which driver numbers each connected WebSocket client is subscribed to
     const clientDriverSubs = new Map<WebSocket, Set<number>>();
-
-    // Rolling window buffer of recent telemetry points per driver number
     const sessionTelemetryCache = new Map<number, DriverTelemetryPoint[]>();
-
     let provider: ITelemetryProvider;
 
-    // Instantiate provider based on config
     if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID' && CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD) {
         provider = new OpenF1PaidProvider(
             CONFIG.OPENF1_USERNAME,
@@ -37,10 +32,7 @@ export const setupWebSocket = async (server: any) => {
                     const driverCache = sessionTelemetryCache.get(driverNum)!;
                     driverCache.push(point);
 
-                    // Maintain the last 150 points for real-time charting without memory leaks
-                    if (driverCache.length > 150) {
-                        driverCache.shift();
-                    }
+                    if (driverCache.length > 150) driverCache.shift();
 
                     const payload = JSON.stringify({
                         type: 'TELEMETRY_UPDATE',
@@ -56,14 +48,27 @@ export const setupWebSocket = async (server: any) => {
                     });
                 },
                 onRaceControl: (rcData: any) => {
-                    const payload = JSON.stringify({
-                        type: 'GLOBAL_TICK',
-                        raceControl: rcData
-                    });
+                    const payload = JSON.stringify({ type: 'RACE_CONTROL_UPDATE', data: rcData });
                     wss.clients.forEach((client) => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(payload);
-                        }
+                        if (client.readyState === WebSocket.OPEN) client.send(payload);
+                    });
+                },
+                onInterval: (intervalData: any) => {
+                    const payload = JSON.stringify({ type: 'INTERVAL_UPDATE', data: intervalData });
+                    wss.clients.forEach((client) => {
+                        if (client.readyState === WebSocket.OPEN) client.send(payload);
+                    });
+                },
+                onPosition: (posData: any) => {
+                    const payload = JSON.stringify({ type: 'POSITION_UPDATE', data: posData });
+                    wss.clients.forEach((client) => {
+                        if (client.readyState === WebSocket.OPEN) client.send(payload);
+                    });
+                },
+                onWeather: (weatherData: any) => {
+                    const payload = JSON.stringify({ type: 'WEATHER_UPDATE', data: weatherData });
+                    wss.clients.forEach((client) => {
+                        if (client.readyState === WebSocket.OPEN) client.send(payload);
                     });
                 },
                 onError: (err: any) => {
@@ -72,15 +77,9 @@ export const setupWebSocket = async (server: any) => {
             });
         } catch (e: any) {
             console.error(`❌ Failed to start provider ${activeProvider.name}:`, e?.message || e);
-            // Automatic fallback: If Free provider fails to start and OpenF1 credentials exist, swap
             if (activeProvider instanceof FreeFastF1Provider && CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD) {
                 console.warn('⚠️ Free Provider failed to launch. Auto-falling back to OpenF1 Paid...');
-                provider = new OpenF1PaidProvider(
-                    CONFIG.OPENF1_USERNAME,
-                    CONFIG.OPENF1_PASSWORD,
-                    CONFIG.OPENF1_BASE,
-                    CONFIG.OPENF1_TOKEN_URL
-                );
+                provider = new OpenF1PaidProvider(CONFIG.OPENF1_USERNAME, CONFIG.OPENF1_PASSWORD, CONFIG.OPENF1_BASE, CONFIG.OPENF1_TOKEN_URL);
                 await startProvider(provider);
             }
         }
@@ -101,21 +100,15 @@ export const setupWebSocket = async (server: any) => {
                     clientDriverSubs.get(ws)?.add(driverNum);
                     provider.subscribeDriver(driverNum);
 
-                    // Send cached points immediately if available so graphs don't wait for next tick
                     const cached = sessionTelemetryCache.get(driverNum);
                     if (cached && cached.length > 0) {
-                        ws.send(JSON.stringify({
-                            type: 'TELEMETRY_UPDATE',
-                            driver: driverNum,
-                            data: { telemetry: cached }
-                        }));
+                        ws.send(JSON.stringify({ type: 'TELEMETRY_UPDATE', driver: driverNum, data: { telemetry: cached } }));
                     }
                 }
 
                 if (type === 'UNSUBSCRIBE_TELEMETRY' && !isNaN(driverNum)) {
                     clientDriverSubs.get(ws)?.delete(driverNum);
 
-                    // Only tell the provider to stop polling if no other connected tab is watching
                     const anyClientStillSubscribed = Array.from(clientDriverSubs.values()).some((s) => s.has(driverNum));
                     if (!anyClientStillSubscribed) {
                         provider.unsubscribeDriver(driverNum);
@@ -130,7 +123,6 @@ export const setupWebSocket = async (server: any) => {
             const subs = clientDriverSubs.get(ws);
             clientDriverSubs.delete(ws);
 
-            // Clean up provider driver listeners if this was the last active client
             if (subs) {
                 for (const driverNum of subs) {
                     const anyClientStillSubscribed = Array.from(clientDriverSubs.values()).some((s) => s.has(driverNum));

@@ -61,7 +61,6 @@ export const Home = () => {
     ];
 
     if (!data) return <div className="p-10 text-white animate-pulse">Loading Dashboard...</div>;
-    console.log('🚀 Home page data:', data); // Debugging line to inspect the fetched data
 
     return (
         <div className="min-h-screen bg-black text-white p-6 flex flex-col gap-6">

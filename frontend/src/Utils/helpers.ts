@@ -33,3 +33,54 @@ export const formatLapTime = (seconds: number | null) => {
     const s = (seconds % 60).toFixed(3);
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
 };
+
+export const getF1Points = (position: number, isSprint: boolean = false) => {
+    const pos = Number(position);
+    if (isNaN(pos) || pos > (isSprint ? 8 : 10)) return 0;
+    
+    if (isSprint) {
+        const sprintPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+        return sprintPoints[pos - 1] || 0;
+    } else {
+        const racePoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+        return racePoints[pos - 1] || 0;
+    }
+};
+
+export const computeLiveChampionship = (activeResults: any[], isSprint: boolean = false) => {
+    const mapped = activeResults.map(r => {
+        const pos = Number(r.position || r.official_position || 99);
+        const pointsStart = r.championship?.pointsStart ?? 0;
+        const posStart = r.championship?.position !== '-' ? Number(r.championship?.position) : 99;
+        
+        const isFinished = r.status === 'Finished' || r.status === 'Classified';
+        const pointsAddition = getF1Points(pos, isSprint);
+        const pointsAfter = isFinished ? (r.championship?.points ?? (pointsStart + pointsAddition)) : (pointsStart + pointsAddition);
+
+        return {
+            driver_number: r.driver_number,
+            pointsStart,
+            posStart,
+            pointsAfter,
+            pointsAddition,
+            isFinished
+        };
+    });
+
+    mapped.sort((a, b) => {
+        if (b.pointsAfter !== a.pointsAfter) return b.pointsAfter - a.pointsAfter;
+        return a.posStart - b.posStart;
+    });
+
+    const standings: Record<number, any> = {};
+    mapped.forEach((m, idx) => {
+        const projectedPos = idx + 1;
+        standings[m.driver_number] = {
+            ...m,
+            projectedPos,
+            posChange: m.posStart === 99 ? 0 : m.posStart - projectedPos
+        };
+    });
+
+    return standings;
+};

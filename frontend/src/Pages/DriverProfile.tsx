@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState, useLayoutEffect, useCallback } from 'react';
+import { useEffect, useRef, useState, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
+import { computeLiveChampionship } from '../Utils/helpers';
+import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget } from '../Components/DashboardWidgets';
+import { SectorBlock } from '../Components/TelemetryWidgets';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
@@ -76,12 +79,13 @@ export const DriverProfile = () => {
     
     const isLive = sessionKey === 'live' || sessionKey === 'latest';
     
-    const connect = useRaceStore(state => state.connect);
+    const { connect, intervals: liveResults, isRace: liveIsRace } = useRaceStore(state => state);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
     
     const liveData = useDriverTelemetry(driverNumber, isLive); 
 
     const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
+    const [raceDetails, setRaceDetails] = useState<any>(null);
     const [loading, setLoading] = useState(false);
 
     const [isAutoScroll, setIsAutoScroll] = useState(true);
@@ -105,7 +109,7 @@ export const DriverProfile = () => {
     const processedDataRef = useRef(processedData);
     useEffect(() => { processedDataRef.current = processedData; }, [processedData]);
 
-    const [legendValues, setLegendValues] = useState({ lapX: '--', speed: '--', rpm: '--', throttle: '--', brake: '--', gear: '--' });
+    const [legendValues, setLegendValues] = useState({ lapX: '--', speed: '--', rpm: '--', throttle: '--', brake: '--', gear: '--', drs: '--' });
 
     const updateLegendState = useCallback((d: any) => {
         if (!d) return;
@@ -115,7 +119,8 @@ export const DriverProfile = () => {
             rpm: d.rpm ?? '--',
             throttle: d.throttle ?? '--',
             brake: d.brake ?? '--',
-            gear: d.gear ?? '--'
+            gear: d.gear ?? '--',
+            drs: d.drs ?? '--'
         });
     }, []);
 
@@ -164,17 +169,19 @@ export const DriverProfile = () => {
 
     useEffect(() => {
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
-
-        if (sessionKey && !isLive) {
-            setLoading(true);
-            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`)
-                .then(r => r.json())
-                .then(cleanData => {
-                    setHistPayload(cleanData);
-                    setLoading(false);
-                })
-                .catch(() => setLoading(false));
-        }
+        
+        const effectiveKey = sessionKey === 'live' ? 'latest' : sessionKey;
+        
+        setLoading(true);
+        Promise.all([
+            !isLive ? fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()) : Promise.resolve({ telemetry: [], laps: [], stints: [] }),
+            fetch(`${API_BASE}/api/race-details/${effectiveKey}`).then(r => r.json())
+        ]).then(([cleanData, rd]) => {
+            if (!isLive) setHistPayload(cleanData);
+            setRaceDetails(rd);
+            setLoading(false);
+        }).catch(() => setLoading(false));
+        
     }, [sessionKey, driverNumber, isLive]);
 
     const snapToPlayhead = useCallback(() => {
@@ -229,6 +236,33 @@ export const DriverProfile = () => {
     const currentSliderVal = isAutoScroll ? maxAllowedScroll : manualMin;
     const hasEnoughDataToScroll = maxLapX > VIEWPORT_LAPS;
 
+    
+    const activeResults = useMemo(() => {
+        if (!isLive || !liveResults || liveResults.length === 0 || !raceDetails?.results) {
+            return raceDetails?.results || [];
+        }
+        return (raceDetails.results || []).map((histDriver: any) => {
+            const liveDriver = liveResults.find((d: any) => String(d.driver_number) === String(histDriver.driver_number));
+            if (liveDriver) {
+                return { ...histDriver, ...liveDriver };
+            }
+            return histDriver;
+        }).sort((a: any, b: any) => {
+            const posA = Number(a.position || a.official_position || 99);
+            const posB = Number(b.position || b.official_position || 99);
+            return posA - posB;
+        });
+    }, [isLive, liveResults, raceDetails]);
+
+    const isRaceMode = (isLive && liveResults && liveResults.length > 0) ? liveIsRace : raceDetails?.isRace;
+
+    const liveStandings = useMemo(() => {
+        if (!activeResults || activeResults.length === 0) return null;
+        return computeLiveChampionship(activeResults, false);
+    }, [activeResults]);
+
+    const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
+
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
     
@@ -263,6 +297,42 @@ export const DriverProfile = () => {
                 {loading && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm rounded-xl border border-gray-800">
                         <span className="text-gray-300 font-bold uppercase tracking-widest animate-pulse">Processing Backend Telemetry...</span>
+                    </div>
+                )}
+
+                {/* DRIVER INFO WIDGETS */}
+                {currentDriverInfo && (
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full mb-2">
+                        <div className="lg:col-span-5 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg flex flex-col justify-center">
+                            <div className="flex gap-12 text-sm h-full items-center">
+                                <div className="flex flex-col gap-1">
+                                    <div>
+                                        <span className="font-bold text-gray-400 block mb-1">Best Lap:</span> 
+                                        <span className="font-mono text-white text-lg font-bold">{currentDriverInfo.best_lap}</span>
+                                    </div>
+                                    {(!isRaceMode && currentDriverInfo.best_sectors) && <SectorBlock sectors={currentDriverInfo.best_sectors} />}
+                                </div>
+                                {(isRaceMode || (isLive && !isRaceMode)) && (
+                                    <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
+                                        <div>
+                                            <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
+                                            <span className="font-mono text-white text-lg font-bold">
+                                                {(currentDriverInfo.last_lap === '-' && (isLive && !isRaceMode)) ? 'In Progress' : currentDriverInfo.last_lap}
+                                            </span>
+                                        </div>
+                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} />}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-3 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
+                            <DriverChampionshipWidget driver={currentDriverInfo} liveStandings={liveStandings} />
+                        </div>
+
+                        <div className="lg:col-span-4 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
+                            <DriverAnalyticsWidget analytics={currentDriverInfo.analytics} driver={currentDriverInfo} />
+                        </div>
                     </div>
                 )}
 
@@ -305,30 +375,41 @@ export const DriverProfile = () => {
                             <div className="flex flex-col gap-4 justify-center">
                                 <div className="flex items-center gap-3">
                                     <span className="w-16 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Throttle</span>
-                                    <div className="flex-1 bg-gray-800 h-2.5 rounded-full overflow-hidden">
-                                        <div className="bg-blue-500 h-full transition-all duration-300" style={{width: `${latestTelemetry.throttle}%`}}></div>
+                                    <div className="flex-1 bg-gray-800 h-2.5 rounded-full overflow-hidden border border-gray-700/40">
+                                        <div className="bg-blue-500 h-full transition-all duration-75" style={{width: `${Math.min(Math.max(latestTelemetry.throttle, 0), 100)}%`}}></div>
                                     </div>
-                                    <span className="w-10 text-right font-mono text-xs text-white">{latestTelemetry.throttle}%</span>
+                                    <span className="w-10 text-right font-mono text-xs text-gray-300 font-bold">{latestTelemetry.throttle}%</span>
                                 </div>
-                                <div className="flex items-center gap-3">
-                                    <span className="w-16 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Brake</span>
-                                    <div className="flex-1 bg-gray-800 h-2.5 rounded-full overflow-hidden">
-                                        <div className="bg-red-500 h-full transition-all duration-300" style={{width: `${latestTelemetry.brake}%`}}></div>
+                                
+                                <div className="grid grid-cols-2 gap-2 mt-1">
+                                    <div className={`flex items-center justify-center py-1.5 rounded text-[10px] font-black uppercase tracking-widest transition-all duration-75 border ${latestTelemetry.brake > 5 ? 'bg-red-600 text-white border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)] animate-pulse' : 'bg-gray-900/60 text-gray-500 border-gray-800'}`}>
+                                        BRAKE
                                     </div>
-                                    <span className="w-10 text-right font-mono text-xs text-white">{latestTelemetry.brake}%</span>
+                                    <div className={`flex items-center justify-center py-1.5 rounded text-[10px] font-black uppercase tracking-widest transition-all duration-75 border ${latestTelemetry.drs >= 10 || latestTelemetry.drs === 1 ? 'bg-emerald-500 text-black border-emerald-300 shadow-[0_0_14px_rgba(16,185,129,0.8)]' : latestTelemetry.drs === 8 ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-[0_0_8px_rgba(245,158,11,0.3)]' : 'bg-gray-900/60 text-gray-500 border-gray-800'}`}>
+                                        {latestTelemetry.drs >= 10 || latestTelemetry.drs === 1 ? 'STRAIGHT MODE' : latestTelemetry.drs === 8 ? 'STRAIGHT AVAIL' : 'STRAIGHT MODE'}
+                                    </div>
                                 </div>
+
                                 <div className="flex items-center gap-3 mt-1">
                                     <span className="w-16 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Gear</span>
-                                    <div className="flex gap-1">
+                                    <div className="flex gap-1 flex-1">
                                         {[1,2,3,4,5,6,7,8].map(g => (
-                                            <div key={g} className={`w-5 h-6 flex items-center justify-center rounded-sm text-xs font-bold ${latestTelemetry.gear === g ? 'bg-yellow-500 text-black shadow-[0_0_8px_rgba(234,179,8,0.5)]' : 'bg-gray-800 text-gray-600'}`}>
+                                            <div key={g} className={`flex-1 h-6 flex items-center justify-center rounded text-xs font-bold transition-colors ${latestTelemetry.gear === g ? 'bg-amber-500 text-black shadow-[0_0_8px_rgba(245,158,11,0.6)]' : 'bg-gray-800/50 text-gray-500 border border-gray-700/30'}`}>
                                                 {g}
                                             </div>
                                         ))}
                                     </div>
+                                    <span className="w-10 text-right font-mono text-xs text-transparent">0%</span>
                                 </div>
                             </div>
                         </div>
+                    </div>
+                )}
+                
+                {currentDriverInfo && (
+                    <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
+                        <TyreHistoryWidget driver={currentDriverInfo} />
+                        <PitHistoryWidget driver={currentDriverInfo} />
                     </div>
                 )}
 

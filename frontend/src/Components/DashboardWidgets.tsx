@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getFlagTheme, getTyreColor } from '../Utils/helpers';
+import { getFlagTheme, getTyreColor, getF1Points } from '../Utils/helpers';
 import { SectorBlock } from './TelemetryWidgets';
 import { useRaceStore } from '../store/useRaceStore';
 
@@ -36,31 +36,51 @@ export const SessionBestsCard = React.memo(({ bests }: { bests: any }) => (
     </div>
 ));
 
-export const RaceControlWidget = React.memo(({ messages }: { messages: any[] }) => {
+export const RaceControlWidget = React.memo(({ messages, latestToast }: { messages: any[], latestToast?: any }) => {
     const [expanded, setExpanded] = useState(false);
+    
+    let toastTheme = null;
+    if (latestToast) {
+        toastTheme = getFlagTheme(latestToast.flag);
+    }
+
     return (
-        <div className={`fixed bottom-6 right-6 z-[60] bg-gray-900 border ${expanded ? 'border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-gray-700'} rounded-xl transition-all duration-300 flex flex-col`} style={{ width: '380px', maxHeight: '500px' }}>
-            <button onClick={() => setExpanded(!expanded)} className="p-3 font-bold uppercase text-xs tracking-widest text-left flex justify-between items-center bg-gray-800 rounded-t-xl text-red-400 hover:bg-gray-700 transition">
-                Race Control News {messages.length > 0 && `(${messages.length})`}
-                <span>{expanded ? '▼' : '▲'}</span>
-            </button>
-            {expanded && (
-                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 custom-scrollbar bg-gray-900 rounded-b-xl border-t border-gray-800">
-                    {messages.map((msg, i) => {
-                        const theme = getFlagTheme(msg.flag);
-                        return (
-                            <div key={i} className={`border-l-4 ${theme.border} ${theme.bg} pl-3 py-2 text-sm rounded-r`}>
-                                <div className="flex justify-between items-start mb-1">
-                                    <span className="text-[10px] text-gray-400 font-mono tracking-widest">{new Date(msg.date).toLocaleTimeString()} | {msg.category}</span>
-                                    <span className="text-lg leading-none">{theme.icon}</span>
-                                </div>
-                                <span className={`${theme.text} leading-snug font-medium block`}>{msg.message}</span>
-                            </div>
-                        );
-                    })}
-                    {messages.length === 0 && <span className="text-gray-500 italic text-sm">No recent messages.</span>}
+        <div className="fixed bottom-6 right-6 z-[60] flex flex-col items-end gap-3" style={{ width: '380px' }}>
+            {latestToast && toastTheme && (
+                <div className={`w-full border-l-4 ${toastTheme.border} ${toastTheme.bg} bg-gray-900 shadow-2xl pl-3 py-3 pr-4 rounded-xl animate-bounce border border-gray-700/50 backdrop-blur-md`}>
+                    <div className="flex justify-between items-start mb-1">
+                        <span className="text-[10px] text-gray-400 font-mono tracking-widest uppercase font-bold">
+                            {new Date(latestToast.date).toLocaleTimeString()} | NEW ALERT
+                        </span>
+                        <span className="text-xl leading-none shadow-sm">{toastTheme.icon}</span>
+                    </div>
+                    <span className={`${toastTheme.text} leading-snug font-bold block text-sm`}>{latestToast.message || latestToast.text}</span>
                 </div>
             )}
+
+            <div className={`w-full bg-gray-900 border ${expanded ? 'border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-gray-700'} rounded-xl transition-all duration-300 flex flex-col`} style={{ maxHeight: '500px' }}>
+                <button onClick={() => setExpanded(!expanded)} className={`p-3 font-bold uppercase text-xs tracking-widest text-left flex justify-between items-center bg-gray-800 rounded-t-xl ${expanded ? '' : 'rounded-b-xl'} text-red-400 hover:bg-gray-700 transition`}>
+                    Race Control News {messages.length > 0 && `(${messages.length})`}
+                    <span>{expanded ? '▼' : '▲'}</span>
+                </button>
+                {expanded && (
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 custom-scrollbar bg-gray-900 rounded-b-xl border-t border-gray-800">
+                        {messages.map((msg, i) => {
+                            const theme = getFlagTheme(msg.flag);
+                            return (
+                                <div key={i} className={`border-l-4 ${theme.border} ${theme.bg} pl-3 py-2 text-sm rounded-r`}>
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className="text-[10px] text-gray-400 font-mono tracking-widest">{new Date(msg.date).toLocaleTimeString()} | {msg.category}</span>
+                                        <span className="text-lg leading-none">{theme.icon}</span>
+                                    </div>
+                                    <span className={`${theme.text} leading-snug font-medium block`}>{msg.message}</span>
+                                </div>
+                            );
+                        })}
+                        {messages.length === 0 && <span className="text-gray-500 italic text-sm">No recent messages.</span>}
+                    </div>
+                )}
+            </div>
         </div>
     );
 });
@@ -94,73 +114,64 @@ const calculatePartialLapProgress = (driver: any) => {
 //     return val;
 // };
 
-// --- HELPER: Standard F1 Points Table ---
-const getF1Points = (position: number, isSprint: boolean = false) => {
-    const pos = Number(position);
-    if (isNaN(pos) || pos > (isSprint ? 8 : 10)) return 0;
-    
-    if (isSprint) {
-        const sprintPoints = [8, 7, 6, 5, 4, 3, 2, 1];
-        return sprintPoints[pos - 1] || 0;
-    } else {
-        const racePoints = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-        return racePoints[pos - 1] || 0;
-    }
-};
 
 // --- COMPONENT: Championship Points Widget (Replaces Live Battles) ---
-export const DriverChampionshipWidget = ({ driver, isSprint = false }: { driver: any, isSprint?: boolean }) => {
-    // 1. Current points before this race/session (pull from backend or default to 0)
+export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: any, liveStandings?: any }) => {
     const pointsBefore = driver.championship?.pointsStart ?? 0;
-    
-    // 2. Determine live or final position
-    const currentPos = driver.position || driver.official_position || 99;
-    const isFinished = driver.status === 'Finished' || driver.status === 'Classified';
-    
-    // 3. Points gained for current/finishing position
-    const pointsAddition = getF1Points(currentPos, isSprint);
-    
-    // 4. Points after race (if finished, add points; if live, show projected total)
-    const pointsAfter = isFinished ? driver.championship?.points : pointsBefore + pointsAddition;
+    const posStart = driver.championship?.position !== '-' ? driver.championship?.position : '-';
+
+    let pointsAddition = 0;
+    let pointsAfter = 0;
+    let projectedPos = '-';
+    let posChange = 0;
+    let isFinished = false;
+
+    if (liveStandings && liveStandings[driver.driver_number]) {
+        const stats = liveStandings[driver.driver_number];
+        pointsAddition = stats.pointsAddition;
+        pointsAfter = stats.pointsAfter;
+        projectedPos = stats.projectedPos;
+        posChange = stats.posChange;
+        isFinished = stats.isFinished;
+    } else {
+        const currentPos = driver.position || driver.official_position || 99;
+        isFinished = driver.status === 'Finished' || driver.status === 'Classified';
+        pointsAddition = getF1Points(currentPos, false);
+        pointsAfter = isFinished ? (driver.championship?.points ?? (pointsBefore + pointsAddition)) : pointsBefore + pointsAddition;
+    }
 
     return (
-        <div className="flex flex-col gap-1.5">
-            <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Championship Points</h3>
-            <div className="bg-gray-800/40 p-2 rounded-md border border-gray-700/60 shadow-inner flex flex-col gap-1 text-xs">
-                
-                {/* Pre-Race Points */}
+        <div className="flex flex-col gap-1.5 h-full">
+            <div className="flex justify-between items-center">
+                <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Championship Standings</h3>
+                {projectedPos !== '-' && (
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${posChange > 0 ? 'text-green-500' : posChange < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                        {posChange > 0 ? '▲' : posChange < 0 ? '▼' : '▬'} {Math.abs(posChange)} Pos
+                    </span>
+                )}
+            </div>
+            <div className="bg-gray-800/40 p-2 rounded-md border border-gray-700/60 shadow-inner flex flex-col gap-1 text-xs flex-1 justify-center">
                 <div className="flex justify-between items-center">
-                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">Before Race</span>
+                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">Start: P{posStart}</span>
                     <span className="font-bold text-gray-300 font-mono">{pointsBefore} PTS</span>
                 </div>
-
-                {/* Projected Addition for Current Position */}
                 <div className="flex justify-between items-center border-t border-gray-700/50 pt-1 mt-0.5">
-                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">
-                        P{currentPos} Addition
-                    </span>
-                    <span className="font-bold text-green-400 font-mono">
-                        +{pointsAddition} PTS
-                    </span>
+                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">Race Addition</span>
+                    <span className="font-bold text-green-400 font-mono">+{pointsAddition} PTS</span>
                 </div>
-
-                {/* Total Points After Race */}
                 <div className="flex justify-between items-center border-t border-gray-700/50 pt-1 mt-0.5">
                     <span className="text-gray-300 uppercase tracking-widest text-[9px] font-bold">
-                        {isFinished ? 'Final Points' : 'Projected Total'}
+                        {isFinished ? `Final: P${projectedPos}` : `Projected: P${projectedPos}`}
                     </span>
-                    <span className="font-bold text-white font-mono text-sm">
-                        {pointsAfter} PTS
-                    </span>
+                    <span className="font-bold text-white font-mono text-sm">{pointsAfter} PTS</span>
                 </div>
-
             </div>
         </div>
     );
 };
 
 
-const DriverAnalyticsWidget = ({ analytics, driver }: { analytics: any, driver: any }) => {
+export const DriverAnalyticsWidget = ({ analytics, driver }: { analytics: any, driver: any }) => {
     if (!analytics) return <div className="text-xs text-gray-500 italic h-full flex items-center pl-6 border-l border-gray-800/50">Analytics loading...</div>;
 
     const { currentStintLength, maxLapsOnCompound, paceDropOff, driverSpeed, speedRank, speedDeficit, consistencyStdDev } = analytics;
@@ -176,7 +187,7 @@ const DriverAnalyticsWidget = ({ analytics, driver }: { analytics: any, driver: 
                     <div className="flex items-baseline gap-2">
                         <span className="text-gray-400 uppercase font-bold w-20 text-[10px]">Tyre Age</span>
                         <span className="text-white font-bold">
-                            {currentStintLength} Laps <span className="text-gray-300 text-[11px] font-normal ml-1">/ Est. {maxLapsOnCompound}</span>
+                            {analytics.currentTyreAge || currentStintLength} Laps <span className="text-gray-300 text-[11px] font-normal ml-1">/ Est. {maxLapsOnCompound}</span>
                         </span>
                     </div>
                     <div className="flex items-baseline gap-2">
@@ -225,7 +236,7 @@ const DriverAnalyticsWidget = ({ analytics, driver }: { analytics: any, driver: 
     );
 };
 
-export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode }: { driver: any, isLive: boolean, isRaceMode: boolean }) => {
+export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode, liveStandings }: { driver: any, isLive: boolean, isRaceMode: boolean, liveStandings?: any }) => {
     const showCurrent = isLive && !isRaceMode;
     const displaySectors = isRaceMode ? driver.last_sectors : driver.best_sectors;
 
@@ -290,7 +301,7 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode }: { d
                 <div className="lg:col-span-3 flex flex-col justify-center gap-3 pl-4 pr-2 border-l border-gray-800/50">
                     
                     {/* CHAMPIONSHIP POINTS MODULE (Replaces Live Battles) */}
-                    <DriverChampionshipWidget driver={driver} isSprint={false} />
+                    <DriverChampionshipWidget driver={driver} liveStandings={liveStandings} />
 
                     {/* LATEST PIT MODULE */}
                     <div className="flex flex-col gap-1.5">
@@ -322,30 +333,8 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode }: { d
                 </div>
             </div>
 
-            <div className="flex items-center gap-4 pt-6 pb-8">
-                <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
-                <div className="flex-1 flex items-center relative h-2.5 bg-gray-800 rounded-full">
-                    {driver.stints && driver.stints.map((stint: any, i: number) => {
-                        const widthPct = (stint.length / Math.max(driver.total_laps, 1)) * 100;
-                        const isFirst = i === 0;
-                        const isLast = i === driver.stints.length - 1;
-                        const tyreColor = getTyreColor(stint.compound);
-                        
-                        return (
-                            <div key={i} className="h-full relative flex items-center justify-center transition-all duration-500"
-                                style={{ width: `${widthPct}%`, backgroundColor: tyreColor, borderTopLeftRadius: isFirst ? '9999px' : '0', borderBottomLeftRadius: isFirst ? '9999px' : '0', borderTopRightRadius: isLast ? '9999px' : '0', borderBottomRightRadius: isLast ? '9999px' : '0' }}>
-                                {stint.length > 2 && <span className="absolute -top-6 text-[11px] font-bold font-mono tracking-tight drop-shadow-sm" style={{ color: tyreColor }}>{stint.length}L</span>}
-                                {i > 0 && (
-                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
-                                        <div className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80" style={{ backgroundColor: tyreColor }} />
-                                        <span className="absolute top-4 text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">L{stint.start}</span>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
+            <TyreHistoryWidget driver={driver} />
+
 
             {((driver.pit_stops && driver.pit_stops.length > 0) || (driver.stints && driver.stints.length > 1)) && (
                 <div className="flex items-start gap-4 pt-4 border-t border-gray-800">
@@ -376,3 +365,60 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode }: { d
         </div>
     );
 });
+
+export const TyreHistoryWidget = ({ driver }: { driver: any }) => (
+    <div className="flex items-center gap-4 pt-6 pb-8">
+        <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
+        <div className="flex-1 flex items-center relative h-2.5 bg-gray-800 rounded-full">
+            {driver && driver.tyreHistory && driver.tyreHistory.stints.map((stint: any, i: number) => {
+                const widthPct = (stint.length / Math.max(driver.total_laps, 1)) * 100;
+                const isFirst = i === 0;
+                const isLast = i === driver.stints.length - 1;
+                const tyreColor = getTyreColor(stint.compound);
+                
+                return (
+                    <div key={i} className="h-full relative flex items-center justify-center transition-all duration-500"
+                        style={{ width: `${widthPct}%`, backgroundColor: tyreColor, borderTopLeftRadius: isFirst ? '9999px' : '0', borderBottomLeftRadius: isFirst ? '9999px' : '0', borderTopRightRadius: isLast ? '9999px' : '0', borderBottomRightRadius: isLast ? '9999px' : '0' }}>
+                        {stint.length > 2 && <span className="absolute -top-6 text-[11px] font-bold font-mono tracking-tight drop-shadow-sm" style={{ color: tyreColor }}>{stint.length}L</span>}
+                        {i > 0 && (
+                            <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
+                                <div className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80" style={{ backgroundColor: tyreColor }} />
+                                <span className="absolute top-4 text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">
+                                    {`L${stint.start > 1 ? stint.start - 1 : stint.stat}`}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    </div>
+);
+
+export const PitHistoryWidget = ({ driver }: { driver: any }) => {
+    if (!((driver.pit_stops && driver.pit_stops.length > 0) || (driver.stints && driver.stints.length > 1))) return null;
+    return (
+        <div className="flex items-start gap-4 pt-4 border-t border-gray-800">
+            <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider mt-1">Pits:</span>
+            <div className="flex flex-wrap gap-2">
+                {driver.pit_stops && driver.pit_stops.length > 0 ? (
+                    driver.pit_stops.map((p: any, i: number) => (
+                        <div key={i} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px]">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Lap {p.lap}</span>
+                            {p.stop_duration && <span>Box: <strong className="text-white">{p.stop_duration.toFixed(2)}s</strong></span>}
+                            {p.lane_duration && <span>Lane: <strong className="text-gray-200">{p.lane_duration.toFixed(2)}s</strong></span>}
+                            {(!p.stop_duration && !p.lane_duration && p.pit_duration) && <span>Time: <strong className="text-white">{p.pit_duration.toFixed(2)}s</strong></span>}
+                        </div>
+                    ))
+                ) : (
+                    driver.stints.slice(1).map((s: any, i: number) => (
+                        <div key={`inferred-${i}`} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px] justify-center">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Lap {s.start}</span>
+                            <span className="text-gray-500 italic text-[9px]">*Duration N/A</span>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+};

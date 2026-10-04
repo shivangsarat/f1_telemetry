@@ -34,7 +34,6 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
         });
         
         this.accessToken = response.data.access_token;
-        console.log("accessToken", this.accessToken);
         const expiresIn = parseInt(response.data.expires_in, 10) || 3600;
         this.tokenExpiryTime = Date.now() + (expiresIn - 300) * 1000;
     }
@@ -45,7 +44,7 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
         setTimeout(async () => {
             try {
                 console.log('🔄 [Live Engine] Refreshing OAuth token for MQTT stream...');
-                this.accessToken = null; // Force new token fetch
+                this.accessToken = null; 
                 await this.authenticate();
                 
                 // Reconnect MQTT with the fresh token
@@ -70,7 +69,6 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
 
         console.log(`🔌 [Live Engine] Connecting to OpenF1 MQTT WebSocket Broker...`);
 
-        // Connect to OpenF1 MQTT over WSS using the OAuth2 token as the password
         this.mqttClient = mqtt.connect('wss://mqtt.openf1.org:8084/mqtt', {
             username: this.username,
             password: this.accessToken,
@@ -80,9 +78,11 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
 
         this.mqttClient.on('connect', () => {
             console.log('🔌 [Live Engine] Connected successfully to OpenF1 MQTT WebSocket Stream.');
-            // Subscribe to live topics for car data and race control
             this.mqttClient?.subscribe('v1/car_data');
             this.mqttClient?.subscribe('v1/race_control');
+            this.mqttClient?.subscribe('v1/intervals');
+            this.mqttClient?.subscribe('v1/position');
+            this.mqttClient?.subscribe('v1/weather');
 
             this.setupTokenRefreshTimer();
         });
@@ -103,10 +103,14 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
                             brake: data.brake || 0
                         });
                     }
-                }
-
-                if (topic === 'v1/race_control') {
+                } else if (topic === 'v1/race_control') {
                     this.callbacks?.onRaceControl?.(data);
+                } else if (topic === 'v1/intervals') {
+                    this.callbacks?.onInterval?.(data);
+                } else if (topic === 'v1/position') {
+                    this.callbacks?.onPosition?.(data);
+                } else if (topic === 'v1/weather') {
+                    this.callbacks?.onWeather?.(data);
                 }
             } catch (err) {
                 console.error('Error parsing MQTT message:', err);

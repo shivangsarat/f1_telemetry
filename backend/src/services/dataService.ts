@@ -100,10 +100,11 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
 };
 
 const formatGap = (gap: any) => {
-    if (gap === null || gap === undefined || gap === '') return 'Leader';
+    if (gap === null || gap === undefined || gap === '') return '-';
     if (typeof gap === 'string' && gap.toUpperCase().includes('LAP')) return gap;
     const num = Number(gap);
-    return (isNaN(num) || num === 0) ? 'Leader' : `+${num.toFixed(3)}s`;
+    if (isNaN(num)) return '-';
+    return `+${num.toFixed(3)}s`;
 };
 
 const formatLapTime = (seconds: number | null) => {
@@ -111,6 +112,131 @@ const formatLapTime = (seconds: number | null) => {
     const m = Math.floor(seconds / 60);
     const s = (seconds % 60).toFixed(3);
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
+};
+
+const buildTyreHistory = (
+    rawStints: any[],
+    rawPitStops: any[],
+    lapLimit: number
+) => {
+    // Use OpenF1's lap_number field, with lap as a compatibility fallback.
+    // Deduplicate exact duplicate records, but retain separate same-compound stops.
+    const seenPitStops = new Set<string>();
+    const pitStops = (Array.isArray(rawPitStops) ? rawPitStops : [])
+        .map((pit: any) => ({
+            ...pit,
+            lap: Number(pit.lap_number ?? pit.lap),
+        }))
+        .filter((pit: any) => Number.isFinite(pit.lap) && pit.lap > 0)
+        .filter((pit: any) => {
+            const key = [
+                pit.lap,
+                pit.date ?? '',
+                pit.stop_duration ?? '',
+                pit.lane_duration ?? pit.pit_duration ?? '',
+            ].join('|');
+
+            if (seenPitStops.has(key)) return false;
+            seenPitStops.add(key);
+            return true;
+        })
+        .sort((a: any, b: any) => a.lap - b.lap);
+
+    // Remove exact duplicate stint records, but do not merge by compound:
+    // two SOFT records can represent separate sets and must stay separate.
+    const seenStints = new Set<string>();
+    const sourceStints = (Array.isArray(rawStints) ? rawStints : [])
+        .filter((stint: any) => Number(stint.lap_start) > 0)
+        .filter((stint: any) => {
+            const key = [
+                stint.stint_number ?? '',
+                stint.compound ?? '',
+                stint.lap_start,
+                stint.lap_end ?? '',
+                stint.tyre_age_at_start ?? '',
+            ].join('|');
+
+            if (seenStints.has(key)) return false;
+            seenStints.add(key);
+            return true;
+        })
+        .sort((a: any, b: any) => Number(a.lap_start) - Number(b.lap_start));
+
+    const stints: any[] = [];
+
+    sourceStints.forEach((source: any, index: number) => {
+        const start = Number(source.lap_start);
+        const nextStart = sourceStints
+            .slice(index + 1)
+            .map((next: any) => Number(next.lap_start))
+            .find((nextStart: number) => nextStart > start);
+
+        const reportedEnd = Number(source.lap_end);
+        let end = reportedEnd > 0
+            ? Math.min(reportedEnd, lapLimit)
+            : Math.min((nextStart ?? lapLimit + 1) - 1, lapLimit);
+
+        // Keep overlapping source records from making overlapping bar segments.
+        if (nextStart !== undefined) {
+            end = Math.min(end, nextStart - 1);
+        }
+
+        if (end < start) return;
+
+        // A pit on lap N normally means the new tyres are used from lap N+1.
+        // Split even when the compound stays the same.
+        const splitStarts = [...new Set(
+            pitStops
+                .map((pit: any) => pit.lap + 1)
+                .filter((lap: number) => lap > start && lap <= end)
+        )].sort((a, b) => a - b);
+
+        const boundaries = [start, ...splitStarts, end + 1];
+
+        for (let i = 0; i < boundaries.length - 1; i++) {
+            const miniStart = boundaries[i];
+            const miniEnd = boundaries[i + 1] - 1;
+
+            if (miniEnd < miniStart) continue;
+
+            stints.push({
+                compound: source.compound || 'UNKNOWN',
+                start: miniStart,
+                end: miniEnd,
+                length: miniEnd - miniStart + 1,
+                tyre_age_at_start:
+                    Number(source.tyre_age_at_start) +
+                    (miniStart - start),
+                // Used to show a pit marker on the tyre timeline only when
+                // there is an actual pit record for this boundary.
+                has_pit_before: pitStops.some(
+                    (pit: any) => pit.lap + 1 === miniStart
+                ),
+            });
+        }
+    });
+
+    // Keep every actual pit stop; attach its following tyre mini-stint if one
+    // starts on the next lap. Unmatched pit stops still remain in this list.
+    const matchedPitStops = pitStops.map((pit: any) => {
+        const nextStint = stints.find(
+            (stint: any) => stint.start === pit.lap + 1
+        );
+
+        return {
+            ...pit,
+            next_stint: nextStint
+                ? {
+                    compound: nextStint.compound,
+                    start: nextStint.start,
+                    end: nextStint.end,
+                    length: nextStint.length,
+                }
+                : null,
+        };
+    });
+
+    return { stints, pitStops: matchedPitStops };
 };
 
 export const getHomeData = async () => {
@@ -225,7 +351,7 @@ export const getRaceDetails = async (sessionKey: string) => {
 
     const getDriverStandings = (driverNumber: number) => {
         const driverStanding = championshipDrivers.find((d: any) => Number(d.driver_number) === driverNumber);
-        return driverStanding ? { position: driverStanding.position_start, pointsStart: driverStanding.points_start, points: driverStanding.points_current, positionEnd: driverStanding.position_end } : { position: '-', pointsStart: '-', points: '-', positionEnd: '-' };
+        return driverStanding ? { position: driverStanding.position_start, pointsStart: driverStanding.points_start, points: driverStanding.points_current, positionEnd: driverStanding.position_current } : { position: '-', pointsStart: '-', points: '-', positionEnd: '-' };
     };
     
     const latestPositions = (posRes.data || []).reduce((acc: any, c: any) => {
@@ -258,9 +384,18 @@ export const getRaceDetails = async (sessionKey: string) => {
         s3: { time: sessionBests.s3.time !== Infinity ? sessionBests.s3.time.toFixed(3) : '-', driver: getDriverName(Number(sessionBests.s3.driver)) }
     };
 
-    const driverList = isRace ? Object.values(iRes.data.reduce((acc: any, c: any) => ({ ...acc, [c.driver_number]: c }), {})) : dRes.data;
-
-    console.log('driverList', driverList);
+    const driverList = isRace ? Object.values(iRes.data.reduce((acc: any, c: any) => {
+        const existing = acc[c.driver_number] || {};
+        return {
+            ...acc,
+            [c.driver_number]: {
+                ...existing,
+                ...c,
+                interval: (c.interval !== null && c.interval !== undefined && c.interval !== '') ? c.interval : existing.interval,
+                gap_to_leader: (c.gap_to_leader !== null && c.gap_to_leader !== undefined && c.gap_to_leader !== '') ? c.gap_to_leader : existing.gap_to_leader
+            }
+        };
+    }, {})) : dRes.data;
 
     // Pre-compute session-wide maximums to avoid recalculating inside the loop
     const compoundMaxLaps: Record<string, number> = {};
@@ -319,31 +454,54 @@ export const getRaceDetails = async (sessionKey: string) => {
         const driverMaxLapCompleted = dLapsCompleted.length > 0 ? Math.max(...dLapsCompleted.map((l: any) => l.lap_number)) : 0;
         const driverMaxLapStarted = dLapsAll.length > 0 ? Math.max(...dLapsAll.map((l: any) => l.lap_number)) : 0;
 
-        const stints = dStints.map((s: any) => ({
-            compound: s.compound || 'UNKNOWN',
-            start: s.lap_start,
-            end: s.lap_end || driverMaxLapStarted,
-            length: Math.max((s.lap_end || driverMaxLapStarted) - s.lap_start, 1)
-        }));
+        const stints = dStints.map((s: any, idx: number, arr: any[]) => {
+            const startLap = s.lap_start;
+            let endLap = s.lap_end;
+            
+            if (arr[idx + 1] && arr[idx + 1].lap_start > startLap) {
+                endLap = arr[idx + 1].lap_start - 1;
+            } else if (!endLap || endLap === 0 || endLap > maxRaceLap) {
+                endLap = driverMaxLapStarted;
+            }
+
+            return {
+                compound: s.compound || 'UNKNOWN',
+                start: startLap,
+                end: endLap,
+                length: Math.max(endLap - startLap + 1, 1),
+                tyre_age_at_start: s.tyre_age_at_start || 0
+            };
+        });
 
         const officialPosition = latestPositions[dNum]?.position || 99;
         const startingPosition = initialPositions[dNum]?.position || officialPosition;
         const posChange = startingPosition - officialPosition;
 
-        let leaderTotalTime = '-';
-        if (isRace && officialPosition === 1 && dLapsCompleted.length > 0) {
-            const totalSeconds = dLapsCompleted.reduce((sum: number, lap: any) => sum + lap.lap_duration, 0);
+        const totalSeconds = dLapsCompleted.reduce((sum: number, lap: any) => sum + lap.lap_duration, 0);
+        let carTotalTime = '-';
+        if (isRace && dLapsCompleted.length > 0) {
             const h = Math.floor(totalSeconds / 3600);
             const m = Math.floor((totalSeconds % 3600) / 60);
             const s = (totalSeconds % 60).toFixed(3);
-            leaderTotalTime = h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s.padStart(6, '0')}` : `${m}:${s.padStart(6, '0')}`;
+            carTotalTime = h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s.padStart(6, '0')}` : `${m}:${s.padStart(6, '0')}`;
         }
 
-        const isLapped = String(row.gap_to_leader).toUpperCase().includes('LAP') || String(row.interval).toUpperCase().includes('LAP');
         let status = 'Active';
+        const gapUp = String(row.gap_to_leader || '').toUpperCase();
+        const intUp = String(row.interval || '').toUpperCase();
+        const isExplicitlyOut = gapUp.includes('DNF') || gapUp.includes('OUT') || gapUp.includes('RETIRED') || 
+                                intUp.includes('DNF') || intUp.includes('OUT') || intUp.includes('RETIRED');
+
         if (isRace) {
-            if (driverMaxLapCompleted === 0 && maxRaceLap > 1) status = 'DNS';
-            else if (maxRaceLap > 5 && (maxRaceLap - driverMaxLapCompleted) > 4 && !isLapped) status = 'DNF';
+            if (isExplicitlyOut) {
+                status = 'DNF';
+            } else if (driverMaxLapCompleted === 0 && maxRaceLap > 1) {
+                status = 'DNS';
+            } else if (maxRaceLap > 5 && (maxRaceLap - driverMaxLapCompleted) > 4) {
+                status = 'DNF';
+            }
+        } else {
+            if (isExplicitlyOut) status = 'DNF';
         }
 
         // 1. Stint Analytics
@@ -351,6 +509,7 @@ export const getRaceDetails = async (sessionKey: string) => {
         const currentCompound = activeStintInfo?.compound || 'UNKNOWN';
         const stintStartLap = activeStintInfo?.lap_start || 1;
         const currentStintLength = Math.max(0, driverMaxLapStarted - stintStartLap + 1);
+        const currentTyreAge = currentStintLength + (activeStintInfo?.tyre_age_at_start || 0);
         
         // Estimate tyre cliff (fallback to baselines if session data is sparse)
         let maxLapsOnCompound = compoundMaxLaps[currentCompound] || 0;
@@ -381,15 +540,18 @@ export const getRaceDetails = async (sessionKey: string) => {
 
         const currentChampionStanding = getDriverStandings(dNum);
 
+        const tyreHistory = buildTyreHistory(dStints, dPits, maxRaceLap);
+
         const analytics = {
             currentCompound,
             currentStintLength,
+            currentTyreAge,
             maxLapsOnCompound,
             paceDropOff: paceDropOff || 0,
             driverSpeed,
             speedRank: speedRank > 0 ? speedRank : '-',
             speedDeficit: Math.max(0, speedDeficit),
-            consistencyStdDev: stdDev || 0
+            consistencyStdDev: stdDev || 0,
         };
 
         const myRankIdx = positionStandings.findIndex((p: { dNum: number; }) => p.dNum === dNum);
@@ -423,8 +585,9 @@ export const getRaceDetails = async (sessionKey: string) => {
             driver_number: dNum,
             name: driver.full_name || driver.name_acronym || `Unknown (${dNum})`,
             team_color: driver.team_colour || 'ffffff',
-            interval: isRace ? (officialPosition === 1 ? leaderTotalTime : formatGap(row.interval)) : '-',
-            gap_to_leader: isRace ? formatGap(row.gap_to_leader) : '-',
+            total_time: carTotalTime,
+            interval: isRace ? (officialPosition === 1 ? '-' : formatGap(row.interval)) : '-',
+            gap_to_leader: isRace ? (officialPosition === 1 ? '-' : formatGap(row.gap_to_leader)) : '-',
             pit_stops: dPits.map((p: any) => ({ 
                 lap: p.lap_number, 
                 pit_duration: p.pit_duration,
@@ -449,13 +612,49 @@ export const getRaceDetails = async (sessionKey: string) => {
             analytics,
             liveBattle,
             latestPit,
-            championship: currentChampionStanding
+            championship: currentChampionStanding,
+            tyreHistory
         };
     });
 
     if (isRace) {
         results.sort((a: any, b: any) => a.official_position - b.official_position);
-        results = results.map((r: any, idx: number) => ({ ...r, position: r.official_position !== 99 ? r.official_position : idx + 1 }));
+        results = results.map((r: any, idx: number) => {
+            const position = r.official_position !== 99 ? r.official_position : idx + 1;
+            
+            let currentGap = r.gap_to_leader;
+            let currentInt = r.interval;
+            
+            if (position === 1) {
+                currentGap = '-';
+                currentInt = '-';
+            } else {
+                const prevCar = results[idx - 1];
+                
+                if (currentGap === '-' && currentInt !== '-' && !currentInt.includes('LAP') && prevCar && prevCar.gap_to_leader !== '-' && !prevCar.gap_to_leader.includes('LAP')) {
+                    const prevGapNum = parseFloat(prevCar.gap_to_leader.replace('+', '').replace('s', ''));
+                    const intNum = parseFloat(currentInt.replace('+', '').replace('s', ''));
+                    if (!isNaN(prevGapNum) && !isNaN(intNum)) currentGap = `+${(prevGapNum + intNum).toFixed(3)}s`;
+                }
+                
+                if (currentInt === '-' && currentGap !== '-' && !currentGap.includes('LAP') && prevCar && prevCar.gap_to_leader !== '-' && !prevCar.gap_to_leader.includes('LAP')) {
+                    const prevGapNum = parseFloat(prevCar.gap_to_leader.replace('+', '').replace('s', ''));
+                    const gapNum = parseFloat(currentGap.replace('+', '').replace('s', ''));
+                    if (!isNaN(prevGapNum) && !isNaN(gapNum)) currentInt = `+${(Math.max(0, gapNum - prevGapNum)).toFixed(3)}s`;
+                }
+                
+                if (prevCar && prevCar.gap_to_leader.includes('LAP') && currentGap === '-') {
+                    currentGap = prevCar.gap_to_leader;
+                }
+            }
+            
+            return { 
+                ...r, 
+                position,
+                interval: currentInt,
+                gap_to_leader: currentGap
+            };
+        });
     } else {
         results.sort((a: any, b: any) => a.best_lap_raw - b.best_lap_raw);
         const p1Time = results[0]?.best_lap_raw;
