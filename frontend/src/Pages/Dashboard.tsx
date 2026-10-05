@@ -34,7 +34,7 @@ export const Dashboard = () => {
                 setHistData({ ...data, loading: false });
                 setHistRaceControl(data.raceControl || []);
             })
-        }).catch(() => setHistData(prev => ({ ...prev, loading: false })));
+            .catch(() => setHistData(prev => ({ ...prev, loading: false })));
     }, [sessionKey, isLiveSession, connect]);
 
     const activeResults = isLiveSession ? (liveRace?.results || []) : (histData.results || []);
