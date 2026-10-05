@@ -248,13 +248,21 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         ...stints.map(s => num(s.lap_end || s.lap_start))
     );
 
+    const driverInfoByNumber = new Map(drivers.map(d => [String(d.driver_number), d]));
+    const sessionResultDriverNumbers = new Set(sessionResults.map(row => num(row.driver_number, -1)).filter(n => n > 0));
     const driverNumbers = new Set<number>();
-    [drivers, intervals, positions, laps, stints, pits, championshipDrivers].forEach(rows => rows.forEach(row => {
+
+    // Timing feeds can contain transient/auxiliary driver numbers which have no
+    // driver metadata (for example the spurious #22 seen after this race).
+    // Only promote a number into the classification when it is known by the
+    // session's driver list or official session result. This keeps genuine
+    // retired/DNS drivers while excluding orphan timing records.
+    [drivers, intervals, positions, laps, stints, pits, championshipDrivers, sessionResults].forEach(rows => rows.forEach(row => {
         const d = num(row.driver_number, -1);
-        if (d > 0) driverNumbers.add(d);
+        if (d <= 0) return;
+        if (driverInfoByNumber.has(String(d)) || sessionResultDriverNumbers.has(d)) driverNumbers.add(d);
     }));
 
-    const driverInfoByNumber = new Map(drivers.map(d => [String(d.driver_number), d]));
     const sessionResultByDriver = new Map(sessionResults.map(row => [String(row.driver_number), row]));
     const driverRows = [...driverNumbers].map(d => {
         const info = driverInfoByNumber.get(String(d)) || {};
