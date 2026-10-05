@@ -260,6 +260,20 @@ export const DriverProfile = () => {
         const best = Number(sessionBests?.lap?.raw);
         return Number.isFinite(lap) && Number.isFinite(best) && Math.abs(lap - best) < 0.0005;
     };
+    const personalBestSectors = completedLaps.reduce((best: any, lap: any) => ({
+        s1: Math.min(best.s1, Number(lap.duration_sector_1) || Infinity),
+        s2: Math.min(best.s2, Number(lap.duration_sector_2) || Infinity),
+        s3: Math.min(best.s3, Number(lap.duration_sector_3) || Infinity),
+    }), { s1: Infinity, s2: Infinity, s3: Infinity });
+    const isPersonalBestSector = (value: any, key: 's1' | 's2' | 's3') => {
+        const n = Number(value);
+        return Number.isFinite(n) && Math.abs(n - personalBestSectors[key]) < 0.0005;
+    };
+    const isSessionBestSector = (value: any, key: 's1' | 's2' | 's3') => {
+        const n = Number(value);
+        const best = Number(sessionBests?.[key]?.raw);
+        return Number.isFinite(n) && Number.isFinite(best) && Math.abs(n - best) < 0.0005;
+    };
 
     const isLiveTracking = isAutoScroll && isLive;
 
@@ -491,7 +505,7 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <span className="font-bold w-12 text-gray-300">L{lap.lap_number}</span>
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getTyreColor(tyreCompound) }} title={tyreCompound}></div>
-                                                    <span className="text-white font-bold">{formatLapTime(lapDuration)}</span>
+                                                    <span className={`font-bold ${isSessionBestLap(lapDuration) ? 'text-purple-400' : (delta === 0 ? 'text-green-400' : 'text-white')}`}>{formatLapTime(lapDuration)}</span>
                                                     <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
                                                         {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
                                                     </span>
@@ -500,9 +514,13 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <div className="flex flex-col gap-1 w-32">
                                                         <div className="flex justify-between text-[10px] text-gray-500">
-                                                            <span className="text-gray-200">S1: {lap.duration_sector_1 ? lap.duration_sector_1.toFixed(2) : '-'}</span>
-                                                            <span className="text-gray-200">S2: {lap.duration_sector_2 ? lap.duration_sector_2.toFixed(2) : '-'}</span>
-                                                            <span className="text-gray-200">S3: {lap.duration_sector_3 ? lap.duration_sector_3.toFixed(2) : '-'}</span>
+                                                            {(['s1', 's2', 's3'] as const).map((key, idx) => {
+                                                                const value = lap[`duration_sector_${idx + 1}`];
+                                                                const cls = isSessionBestSector(value, key) ? 'text-purple-400 font-bold'
+                                                                    : isPersonalBestSector(value, key) ? 'text-green-400 font-bold'
+                                                                    : 'text-gray-200';
+                                                                return <span key={key} className={cls}>{key.toUpperCase()}: {value ? Number(value).toFixed(2) : '-'}</span>;
+                                                            })}
                                                         </div>
                                                         {renderMinisectors(lap.segments_sector_1 || lap.seg1)}
                                                     </div>
