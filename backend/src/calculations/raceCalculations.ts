@@ -295,6 +295,61 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         }
     }
 
+    // Final fallback for race timing: if an interval sample is unavailable, derive
+    // the gap from cumulative completed-lap times when both cars are on the same lap.
+    // This is especially useful during live pit/position transitions where OpenF1
+    // can temporarily publish null interval values.
+    const cumulativeLapTimeByDriver: Record<string, number> = {};
+    const completedLapCountByDriver: Record<string, number> = {};
+    laps.forEach(l => {
+        const d = String(l.driver_number);
+        const duration = num(l.lap_duration);
+        if (duration > 0) {
+            cumulativeLapTimeByDriver[d] = (cumulativeLapTimeByDriver[d] || 0) + duration;
+            completedLapCountByDriver[d] = (completedLapCountByDriver[d] || 0) + 1;
+        }
+    });
+
+    const leaderForTiming = [...driverRows]
+        .filter(d => Number(d.position) === 1)
+        .sort((a, b) => Number(a.position) - Number(b.position))[0];
+
+    if (leaderForTiming) {
+        const leaderNumber = String(leaderForTiming.driver_number);
+        const leaderLapCount = completedLapCountByDriver[leaderNumber] || 0;
+        const leaderTotal = cumulativeLapTimeByDriver[leaderNumber];
+
+        for (const row of driverRows) {
+            if (Number(row.position) === 1) continue;
+
+            const d = String(row.driver_number);
+            const lapCount = completedLapCountByDriver[d] || 0;
+            const total = cumulativeLapTimeByDriver[d];
+
+            if (!Number.isFinite(Number(row.gap_to_leader))
+                && leaderLapCount > 0
+                && lapCount === leaderLapCount
+                && Number.isFinite(total)
+                && Number.isFinite(leaderTotal)) {
+                row.gap_to_leader = Math.max(0, total - leaderTotal);
+            }
+        }
+
+        const timingOrder = [...driverRows]
+            .filter(d => Number(d.position) < 99)
+            .sort((a, b) => Number(a.position) - Number(b.position));
+
+        for (let i = 1; i < timingOrder.length; i++) {
+            const row = timingOrder[i];
+            const ahead = timingOrder[i - 1];
+            if (!Number.isFinite(Number(row.interval))
+                && Number.isFinite(Number(row.gap_to_leader))
+                && Number.isFinite(Number(ahead.gap_to_leader))) {
+                row.interval = Math.max(0, Number(row.gap_to_leader) - Number(ahead.gap_to_leader));
+            }
+        }
+    }
+
     const sessionBestsRaw = {
         lap: { time: Infinity, driver: null as any },
         s1: { time: Infinity, driver: null as any },
