@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useLayoutEffect, useCallback, useMemo } fr
 import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
-import { computeLiveChampionship } from '../Utils/helpers';
 import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart } from '../Components/DashboardWidgets';
 import { SectorBlock } from '../Components/TelemetryWidgets';
 import uPlot from 'uplot';
@@ -79,7 +78,8 @@ export const DriverProfile = () => {
     
     const isLive = sessionKey === 'live' || sessionKey === 'latest';
     
-    const { connect, intervals: liveResults, isRace: liveIsRace } = useRaceStore(state => state);
+    const connect = useRaceStore(state => state.connect);
+    const liveRace = useRaceStore(state => state.liveRace);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
     
     const liveData = useDriverTelemetry(driverNumber, isLive); 
@@ -168,20 +168,22 @@ export const DriverProfile = () => {
     }, [updateLegendState]);
 
     useEffect(() => {
+        if (isLive) {
+            setLoading(false);
+            return;
+        }
+
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
-        
-        const effectiveKey = sessionKey === 'live' ? 'latest' : sessionKey;
-        
         setLoading(true);
+
         Promise.all([
-            !isLive ? fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()) : Promise.resolve({ telemetry: [], laps: [], stints: [] }),
-            fetch(`${API_BASE}/api/race-details/${effectiveKey}`).then(r => r.json())
+            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()),
+            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
         ]).then(([cleanData, rd]) => {
-            if (!isLive) setHistPayload(cleanData);
+            setHistPayload(cleanData);
             setRaceDetails(rd);
             setLoading(false);
         }).catch(() => setLoading(false));
-        
     }, [sessionKey, driverNumber, isLive]);
 
     const snapToPlayhead = useCallback(() => {
@@ -237,29 +239,8 @@ export const DriverProfile = () => {
     const hasEnoughDataToScroll = maxLapX > VIEWPORT_LAPS;
 
     
-    const activeResults = useMemo(() => {
-        if (!isLive || !liveResults || liveResults.length === 0 || !raceDetails?.results) {
-            return raceDetails?.results || [];
-        }
-        return (raceDetails.results || []).map((histDriver: any) => {
-            const liveDriver = liveResults.find((d: any) => String(d.driver_number) === String(histDriver.driver_number));
-            if (liveDriver) {
-                return { ...histDriver, ...liveDriver };
-            }
-            return histDriver;
-        }).sort((a: any, b: any) => {
-            const posA = Number(a.position || a.official_position || 99);
-            const posB = Number(b.position || b.official_position || 99);
-            return posA - posB;
-        });
-    }, [isLive, liveResults, raceDetails]);
-
-    const isRaceMode = (isLive && liveResults && liveResults.length > 0) ? liveIsRace : raceDetails?.isRace;
-
-    const liveStandings = useMemo(() => {
-        if (!activeResults || activeResults.length === 0) return null;
-        return computeLiveChampionship(activeResults, false);
-    }, [activeResults]);
+    const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
+    const isRaceMode = isLive ? Boolean(liveRace?.isRace) : Boolean(raceDetails?.isRace);
 
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
@@ -327,7 +308,7 @@ export const DriverProfile = () => {
                         </div>
 
                         <div className="lg:col-span-3 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
-                            <DriverChampionshipWidget driver={currentDriverInfo} liveStandings={liveStandings} />
+                            <DriverChampionshipWidget driver={currentDriverInfo} liveStandings={undefined} />
                         </div>
 
                         <div className="lg:col-span-4 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
@@ -468,7 +449,7 @@ export const DriverProfile = () => {
                             <AllDriversPaceChart 
                                 activeResults={activeResults} 
                                 currentDriverNumber={driverNumber} 
-                                maxRaceLap={raceDetails?.maxRaceLap || activeData.laps?.length || 1} 
+                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)} 
                             />
                         </div>
 
