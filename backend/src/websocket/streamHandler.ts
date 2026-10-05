@@ -1,16 +1,18 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { CONFIG } from '../config';
-import { ITelemetryProvider, DriverTelemetryPoint } from '../providers/ITelemetryProvider';
+import { ITelemetryProvider } from '../providers/ITelemetryProvider';
 import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
+import { LiveSessionEngine } from '../services/liveSessionEngine';
 
 export const setupWebSocket = async (server: any) => {
     const wss = new WebSocketServer({ server });
+    const engine = new LiveSessionEngine();
 
     const clientDriverSubs = new Map<WebSocket, Set<number>>();
-    const sessionTelemetryCache = new Map<number, DriverTelemetryPoint[]>();
-    let provider: ITelemetryProvider;
+    const clientUnsubscribers = new Map<WebSocket, Map<number, () => void>>();
 
+    let provider: ITelemetryProvider;
     if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID' && CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD) {
         provider = new OpenF1PaidProvider(
             CONFIG.OPENF1_USERNAME,
@@ -22,115 +24,89 @@ export const setupWebSocket = async (server: any) => {
         provider = new FreeFastF1Provider(CONFIG.FASTF1_WS_URL);
     }
 
-    const startProvider = async (activeProvider: ITelemetryProvider) => {
-        try {
-            await activeProvider.connect({
-                onTelemetry: (driverNum: number, point: DriverTelemetryPoint) => {
-                    if (!sessionTelemetryCache.has(driverNum)) {
-                        sessionTelemetryCache.set(driverNum, []);
+    await provider.connect({
+        onStreamData: (topic, data) => engine.ingest(topic, data),
+        onTelemetry: (driverNumber, point) => {
+            // The provider-level callback is retained for the FastF1 adapter.
+            // OpenF1 car_data is also ingested into the engine below via onStreamData.
+            if (CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
+                const listeners = clientUnsubscribers;
+                for (const [ws, subs] of clientDriverSubs) {
+                    if (ws.readyState === WebSocket.OPEN && subs.has(driverNumber)) {
+                        ws.send(JSON.stringify({
+                            type: 'LIVE_TELEMETRY_POINT',
+                            driver: driverNumber,
+                            data: point
+                        }));
                     }
-                    const driverCache = sessionTelemetryCache.get(driverNum)!;
-                    driverCache.push(point);
-
-                    if (driverCache.length > 150) driverCache.shift();
-
-                    const payload = JSON.stringify({
-                        type: 'TELEMETRY_UPDATE',
-                        driver: driverNum,
-                        data: { telemetry: driverCache }
-                    });
-
-                    wss.clients.forEach((client) => {
-                        const subs = clientDriverSubs.get(client);
-                        if (client.readyState === WebSocket.OPEN && subs && subs.has(driverNum)) {
-                            client.send(payload);
-                        }
-                    });
-                },
-                onRaceControl: (rcData: any) => {
-                    const payload = JSON.stringify({ type: 'RACE_CONTROL_UPDATE', data: rcData });
-                    wss.clients.forEach((client) => {
-                        if (client.readyState === WebSocket.OPEN) client.send(payload);
-                    });
-                },
-                onInterval: (intervalData: any) => {
-                    const payload = JSON.stringify({ type: 'INTERVAL_UPDATE', data: intervalData });
-                    wss.clients.forEach((client) => {
-                        if (client.readyState === WebSocket.OPEN) client.send(payload);
-                    });
-                },
-                onPosition: (posData: any) => {
-                    const payload = JSON.stringify({ type: 'POSITION_UPDATE', data: posData });
-                    wss.clients.forEach((client) => {
-                        if (client.readyState === WebSocket.OPEN) client.send(payload);
-                    });
-                },
-                onWeather: (weatherData: any) => {
-                    const payload = JSON.stringify({ type: 'WEATHER_UPDATE', data: weatherData });
-                    wss.clients.forEach((client) => {
-                        if (client.readyState === WebSocket.OPEN) client.send(payload);
-                    });
-                },
-                onError: (err: any) => {
-                    console.error(`[${activeProvider.name} Error]:`, err?.message || err);
                 }
-            });
-        } catch (e: any) {
-            console.error(`❌ Failed to start provider ${activeProvider.name}:`, e?.message || e);
-            if (activeProvider instanceof FreeFastF1Provider && CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD) {
-                console.warn('⚠️ Free Provider failed to launch. Auto-falling back to OpenF1 Paid...');
-                provider = new OpenF1PaidProvider(CONFIG.OPENF1_USERNAME, CONFIG.OPENF1_PASSWORD, CONFIG.OPENF1_BASE, CONFIG.OPENF1_TOKEN_URL);
-                await startProvider(provider);
+                void listeners;
             }
-        }
-    };
+        },
+        onError: err => console.error(`[${provider.name} Error]:`, err?.message || err)
+    });
 
-    await startProvider(provider);
+    engine.subscribe(snapshot => {
+        const payload = JSON.stringify(snapshot);
+        wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) client.send(payload);
+        });
+    });
 
-    wss.on('connection', (ws: WebSocket) => {
+    wss.on('connection', ws => {
         clientDriverSubs.set(ws, new Set());
+        clientUnsubscribers.set(ws, new Map());
 
-        ws.on('message', (msg: any) => {
+        // Immediately hydrate a newly connected live client from the same
+        // backend state used for all subsequent streaming updates.
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(engine.getSnapshot()));
+        }
+
+        ws.on('message', raw => {
             try {
-                const parsed = JSON.parse(msg.toString());
-                const { type, driver } = parsed;
-                const driverNum = Number(driver);
+                const message = JSON.parse(raw.toString());
+                const driver = Number(message.driver);
 
-                if (type === 'SUBSCRIBE_TELEMETRY' && !isNaN(driverNum)) {
-                    clientDriverSubs.get(ws)?.add(driverNum);
-                    provider.subscribeDriver(driverNum);
+                if ((message.type === 'SUBSCRIBE_DRIVER' || message.type === 'SUBSCRIBE_TELEMETRY') && Number.isFinite(driver)) {
+                    const subs = clientDriverSubs.get(ws)!;
+                    if (subs.has(driver)) return;
 
-                    const cached = sessionTelemetryCache.get(driverNum);
-                    if (cached && cached.length > 0) {
-                        ws.send(JSON.stringify({ type: 'TELEMETRY_UPDATE', driver: driverNum, data: { telemetry: cached } }));
-                    }
+                    subs.add(driver);
+                    provider.subscribeDriver(driver);
+
+                    const unsubscribe = engine.subscribeDriver(driver, payload => {
+                        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+                    });
+                    clientUnsubscribers.get(ws)!.set(driver, unsubscribe);
                 }
 
-                if (type === 'UNSUBSCRIBE_TELEMETRY' && !isNaN(driverNum)) {
-                    clientDriverSubs.get(ws)?.delete(driverNum);
+                if ((message.type === 'UNSUBSCRIBE_DRIVER' || message.type === 'UNSUBSCRIBE_TELEMETRY') && Number.isFinite(driver)) {
+                    clientDriverSubs.get(ws)?.delete(driver);
+                    clientUnsubscribers.get(ws)?.get(driver)?.();
+                    clientUnsubscribers.get(ws)?.delete(driver);
 
-                    const anyClientStillSubscribed = Array.from(clientDriverSubs.values()).some((s) => s.has(driverNum));
-                    if (!anyClientStillSubscribed) {
-                        provider.unsubscribeDriver(driverNum);
-                    }
+                    const stillUsed = Array.from(clientDriverSubs.values()).some(set => set.has(driver));
+                    if (!stillUsed) provider.unsubscribeDriver(driver);
                 }
-            } catch (err: any) {
-                console.error('Error handling WebSocket message:', err?.message || err);
+            } catch (error) {
+                console.error('Error handling WebSocket message:', error);
             }
         });
 
         ws.on('close', () => {
             const subs = clientDriverSubs.get(ws);
+            const unsubscribers = clientUnsubscribers.get(ws);
             clientDriverSubs.delete(ws);
+            clientUnsubscribers.delete(ws);
 
-            if (subs) {
-                for (const driverNum of subs) {
-                    const anyClientStillSubscribed = Array.from(clientDriverSubs.values()).some((s) => s.has(driverNum));
-                    if (!anyClientStillSubscribed) {
-                        provider.unsubscribeDriver(driverNum);
-                    }
-                }
+            for (const driver of subs || []) {
+                unsubscribers?.get(driver)?.();
+                const stillUsed = Array.from(clientDriverSubs.values()).some(set => set.has(driver));
+                if (!stillUsed) provider.unsubscribeDriver(driver);
             }
         });
     });
+
+    console.log(`🏎️ [Live Engine] Backend WebSocket state stream ready using ${provider.name}`);
 };
