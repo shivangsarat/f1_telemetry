@@ -354,34 +354,80 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode, liveS
     );
 });
 
-export const TyreHistoryWidget = ({ driver }: { driver: any }) => (
-    <div className="flex items-center gap-4 pt-6 pb-8">
-        <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
-        <div className="flex-1 flex items-center relative h-2.5 bg-gray-800 rounded-full">
-            {driver && driver.tyreHistory && driver.tyreHistory.stints.map((stint: any, i: number) => {
-                const widthPct = (stint.length / Math.max(driver.total_laps, 1)) * 100;
-                const isFirst = i === 0;
-                const isLast = i === driver.stints.length - 1;
-                const tyreColor = getTyreColor(stint.compound);
-                
-                return (
-                    <div key={i} className="h-full relative flex items-center justify-center transition-all duration-500"
-                        style={{ width: `${widthPct}%`, backgroundColor: tyreColor, borderTopLeftRadius: isFirst ? '9999px' : '0', borderBottomLeftRadius: isFirst ? '9999px' : '0', borderTopRightRadius: isLast ? '9999px' : '0', borderBottomRightRadius: isLast ? '9999px' : '0' }}>
-                        {stint.length > 2 && <span className="absolute -top-6 text-[11px] font-bold font-mono tracking-tight drop-shadow-sm" style={{ color: tyreColor }}>{stint.length}L</span>}
-                        {i > 0 && (
-                            <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
-                                <div className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80" style={{ backgroundColor: tyreColor }} />
-                                <span className="absolute top-4 text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">
-                                    {`L${stint.start > 1 ? stint.start - 1 : stint.stat}`}
-                                </span>
+export const TyreHistoryWidget = ({ driver }: { driver: any }) => {
+    const stints = Array.isArray(driver?.tyreHistory?.stints) ? driver.tyreHistory.stints : [];
+    if (stints.length === 0) {
+        return (
+            <div className="flex items-center gap-4 pt-6 pb-8">
+                <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
+                <div className="flex-1 h-2.5 bg-gray-800 rounded-full" />
+            </div>
+        );
+    }
+
+    // Use the actual stint coverage as the denominator. This is more robust for
+    // live sessions where total_laps can lag behind the latest stint/lap data.
+    const maxEnd = Math.max(
+        ...stints.map((stint: any) => Number(stint.end ?? 0)),
+        Number(driver?.total_laps ?? 0),
+        1
+    );
+
+    return (
+        <div className="flex items-center gap-4 pt-6 pb-8">
+            <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
+            <div className="flex-1 relative pt-7">
+                <div className="relative flex w-full h-2.5 bg-gray-800 rounded-full overflow-visible">
+                    {stints.map((stint: any, i: number) => {
+                        const start = Number(stint.start ?? 1);
+                        const end = Number(stint.end ?? start);
+                        const length = Math.max(0, Number(stint.length ?? (end - start + 1)));
+                        const widthPct = (length / maxEnd) * 100;
+                        const isFirst = i === 0;
+                        const isLast = i === stints.length - 1;
+                        const tyreColor = getTyreColor(stint.compound);
+
+                        return (
+                            <div
+                                key={`${start}-${end}-${i}`}
+                                className="relative h-full flex-none"
+                                style={{
+                                    flexBasis: `${widthPct}%`,
+                                    backgroundColor: tyreColor,
+                                    borderTopLeftRadius: isFirst ? '9999px' : '0',
+                                    borderBottomLeftRadius: isFirst ? '9999px' : '0',
+                                    borderTopRightRadius: isLast ? '9999px' : '0',
+                                    borderBottomRightRadius: isLast ? '9999px' : '0'
+                                }}
+                            >
+                                {length > 2 && (
+                                    <span
+                                        className="absolute left-1/2 -translate-x-1/2 -top-7 whitespace-nowrap text-[11px] font-bold font-mono tracking-tight drop-shadow-sm"
+                                        style={{ color: tyreColor }}
+                                    >
+                                        {length}L
+                                    </span>
+                                )}
+
+                                {i > 0 && (
+                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
+                                        <div
+                                            className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80"
+                                            style={{ backgroundColor: tyreColor }}
+                                        />
+                                        <span className="absolute top-4 whitespace-nowrap text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">
+                                            L{start}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
-                );
-            })}
+                        );
+                    })}
+                </div>
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
 export const PitHistoryWidget = ({ driver }: { driver: any }) => {
     if (!((driver && driver.tyreHistory && driver.tyreHistory.pit_stops && driver.tyreHistory.pit_stops.length > 0) || (driver.tyreHistory.stints && driver.tyreHistory.stints.length > 1))) return null;
