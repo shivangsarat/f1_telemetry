@@ -208,7 +208,7 @@ export class LiveSessionEngine {
             const snapshot = this.getSnapshot();
             for (const listener of this.listeners) listener(snapshot);
             for (const [driver, listeners] of this.driverListeners) {
-                const payload = this.getDriverSnapshot(driver);
+                const payload = this.getDriverSnapshot(driver, false);
                 for (const listener of listeners) listener(payload);
             }
         }, 50);
@@ -237,10 +237,10 @@ export class LiveSessionEngine {
         };
     }
 
-    getDriverSnapshot(driverNumber: number) {
+    getDriverSnapshot(driverNumber: number, includeTelemetry = true) {
         const race = this.getSnapshot().data;
         const driver = race.results?.find((d: any) => Number(d.driver_number) === driverNumber) || null;
-        const telemetry = buildTelemetryHistory(this.carData.get(driverNumber) || [], this.state.laps);
+        const telemetry = includeTelemetry ? buildTelemetryHistory(this.carData.get(driverNumber) || [], this.state.laps) : undefined;
 
         return {
             type: 'LIVE_DRIVER_STATE',
@@ -249,7 +249,7 @@ export class LiveSessionEngine {
             timestamp: Date.now(),
             data: {
                 driver,
-                telemetry,
+                ...(includeTelemetry ? { telemetry } : {}),
                 laps: this.state.laps.filter(l => Number(l.driver_number) === driverNumber),
                 stints: this.state.stints.filter(s => Number(s.driver_number) === driverNumber)
             }
