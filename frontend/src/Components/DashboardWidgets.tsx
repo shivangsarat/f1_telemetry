@@ -127,13 +127,13 @@ export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: an
     let posChange = 0;
     let isFinished = false;
 
-    if (liveStandings && liveStandings[driver.driver_number]) {
-        const stats = liveStandings[driver.driver_number];
-        pointsAddition = stats.pointsAddition;
-        pointsAfter = stats.pointsAfter;
-        projectedPos = stats.projectedPos;
-        posChange = stats.posChange;
-        isFinished = stats.isFinished;
+    if (driver.championship) {
+        const stats = driver.championship;
+        pointsAddition = stats.pointsAddition ?? 0;
+        pointsAfter = stats.pointsAfter ?? pointsBefore;
+        projectedPos = stats.projectedPos ?? '-';
+        posChange = stats.posChange ?? 0;
+        isFinished = Boolean(stats.isFinished);
     } else {
         const currentPos = driver.position || driver.official_position || 99;
         isFinished = driver.status === 'Finished' || driver.status === 'Classified';
@@ -246,17 +246,17 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode, liveS
     const { pit_stops } = driver;
 
     // --- TIMELINE SCALE LOGIC ---
-    const allDrivers = useRaceStore(state => state.intervals) || [];
-    const maxRaceLapStore = useRaceStore(state => state.maxRaceLap);
+    const liveRace = useRaceStore(state => state.liveRace);
+    const maxRaceLapStore = liveRace?.maxRaceLap || 0;
     
     // Check driver status to control the progress bar behavior
     const isDNF = driver.status === 'DNF' || driver.status?.toUpperCase().includes('OUT') || driver.status === 'Retired';
     const isFinished = driver.status === 'Finished' || (!isLive && !isDNF);
 
-    const currentLeaderLap = allDrivers.length > 0 ? Math.max(...allDrivers.map(d => d.completed_laps || 0)) : 1;
-    const globalMaxLap = (maxRaceLapStore && maxRaceLapStore > 0) ? maxRaceLapStore : currentLeaderLap;
+    const currentLeaderLap = Math.max(1, ...(liveRace?.results || []).map((d: any) => d.completed_laps || 0));
+    const globalMaxLap = maxRaceLapStore > 0 ? maxRaceLapStore : currentLeaderLap;
     
-    const partialLap = (isLive && !isFinished && !isDNF) ? calculatePartialLapProgress(driver) : 0;
+    const partialLap = (isLive && !isFinished && !isDNF) ? Number(driver.partial_lap_progress || 0) : 0;
     const currentDistance = (driver.completed_laps || 0) + partialLap;
 
     let scaleMax = globalMaxLap;
