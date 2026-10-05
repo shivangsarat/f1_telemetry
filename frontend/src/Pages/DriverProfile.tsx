@@ -254,6 +254,12 @@ export const DriverProfile = () => {
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
     const bestLapObj = completedLaps.length > 0 ? completedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, completedLaps[0]) : null;
+    const sessionBests = isLive ? liveRace?.sessionBests : raceDetails?.sessionBests;
+    const isSessionBestLap = (value: any) => {
+        const lap = Number(value);
+        const best = Number(sessionBests?.lap?.raw);
+        return Number.isFinite(lap) && Number.isFinite(best) && Math.abs(lap - best) < 0.0005;
+    };
 
     const isLiveTracking = isAutoScroll && isLive;
 
@@ -289,19 +295,19 @@ export const DriverProfile = () => {
                                 <div className="flex flex-col gap-1">
                                     <div>
                                         <span className="font-bold text-gray-400 block mb-1">Best Lap:</span> 
-                                        <span className="font-mono text-white text-lg font-bold">{currentDriverInfo.best_lap}</span>
+                                        <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentDriverInfo.best_lap_raw) ? 'text-purple-400' : 'text-white'}`}>{currentDriverInfo.best_lap}</span>
                                     </div>
-                                    {(!isRaceMode && currentDriverInfo.best_sectors) && <SectorBlock sectors={currentDriverInfo.best_sectors} />}
+                                    {(!isRaceMode && currentDriverInfo.best_sectors) && <SectorBlock sectors={currentDriverInfo.best_sectors} sessionBests={sessionBests} />}
                                 </div>
                                 {(isRaceMode || (isLive && !isRaceMode)) && (
                                     <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
                                         <div>
                                             <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
-                                            <span className="font-mono text-white text-lg font-bold">
+                                            <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentLiveLapObj?.lap_duration) ? 'text-purple-400' : 'text-white'}`}>
                                                 {(currentDriverInfo.last_lap === '-' && (isLive && !isRaceMode)) ? 'In Progress' : currentDriverInfo.last_lap}
                                             </span>
                                         </div>
-                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} />}
+                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} sessionBests={sessionBests} />}
                                     </div>
                                 )}
                             </div>
