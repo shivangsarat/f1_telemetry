@@ -142,7 +142,7 @@ export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: an
             </div>
             <div className="bg-gray-800/40 p-2 rounded-md border border-gray-700/60 shadow-inner flex flex-col gap-1 text-xs flex-1 justify-center">
                 <div className="flex justify-between items-center">
-                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">Start: P{posStart}</span>
+                    <span className="text-gray-300 uppercase tracking-widest text-[10px] font-bold">Start: <span className="text-white">P{posStart}</span></span>
                     <span className="font-bold text-gray-300 font-mono">{pointsBefore} PTS</span>
                 </div>
                 <div className="flex justify-between items-center border-t border-gray-700/50 pt-1 mt-0.5">
