@@ -119,7 +119,9 @@ const calculatePartialLapProgress = (driver: any) => {
 // --- COMPONENT: Championship Points Widget (Replaces Live Battles) ---
 export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: any, liveStandings?: any }) => {
     const pointsBefore = driver.championship?.pointsStart ?? 0;
-    const posStart = driver.championship?.position !== '-' ? driver.championship?.position : '-';
+    // Backend uses posStart; keep position as a legacy fallback for older payloads.
+    const rawPosStart = driver.championship?.posStart ?? driver.championship?.position;
+    const posStart = rawPosStart !== undefined && rawPosStart !== null && rawPosStart !== 99 ? rawPosStart : '-';
 
     const stats = driver.championship || {};
     const pointsAddition = stats.pointsAddition ?? 0;
