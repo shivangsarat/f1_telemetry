@@ -214,8 +214,14 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
     const stints = Array.isArray(input.stints) ? input.stints : [];
     const pits = Array.isArray(input.pits) ? input.pits : [];
     const championshipDrivers = Array.isArray(input.championshipDrivers) ? input.championshipDrivers : [];
+    const sessionResults = Array.isArray(input.sessionResults) ? input.sessionResults : [];
     const sessionInfo = input.sessionInfo || {};
-    const isRace = input.isRace ?? (String(sessionInfo.session_type || sessionInfo.session_name || '').toLowerCase().includes('race') || String(sessionInfo.session_type || '').toLowerCase().includes('sprint'));
+    const isRace = input.isRace ?? (
+        String(sessionInfo.session_type || sessionInfo.session_name || '').toLowerCase().includes('race')
+        || String(sessionInfo.session_type || '').toLowerCase().includes('sprint')
+        || intervals.length > 0
+        || championshipDrivers.length > 0
+    );
 
     const latestPositions = latestByDriver(positions);
     const initialPositions = earliestByDriver(positions);
@@ -234,11 +240,13 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
     }));
 
     const driverInfoByNumber = new Map(drivers.map(d => [String(d.driver_number), d]));
+    const sessionResultByDriver = new Map(sessionResults.map(row => [String(row.driver_number), row]));
     const driverRows = [...driverNumbers].map(d => {
         const info = driverInfoByNumber.get(String(d)) || {};
         const interval = latestIntervals[String(d)] || {};
-        const position = num(latestPositions[String(d)]?.position, num(initialPositions[String(d)]?.position, 99));
-        return { ...info, ...interval, driver_number: d, position };
+        const result = sessionResultByDriver.get(String(d)) || {};
+        const position = num(latestPositions[String(d)]?.position, num(result.position, num(initialPositions[String(d)]?.position, 99)));
+        return { ...info, ...interval, ...result, driver_number: d, position };
     });
 
     const sessionBestsRaw = {
