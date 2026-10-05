@@ -226,7 +226,8 @@ export class LiveSessionEngine {
             weather: this.state.weather,
             raceControl: this.state.raceControl,
             championshipDrivers: this.state.championshipDrivers,
-            championshipTeams: this.state.championshipTeams
+            championshipTeams: this.state.championshipTeams,
+            sessionResults: this.state.sessionResults
         });
 
         return {
