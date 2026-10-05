@@ -11,6 +11,7 @@ export type RaceCalculationInput = {
     raceControl?: any[];
     championshipDrivers?: any[];
     championshipTeams?: any[];
+    sessionResults?: any[];
     isRace?: boolean;
 };
 
