@@ -179,7 +179,7 @@ export const Dashboard = () => {
                 </div>
 
                 <div className="bg-gray-900 rounded-xl border border-gray-800 flex-1 flex flex-col overflow-hidden shadow-2xl">
-                    <div className="overflow-y-auto flex-1 custom-scrollbar relative">
+                    <div className="overflow-y-auto flex-1 custom-scrollbar relative pb-24">
                         {(isLiveSession ? !liveRace : histData.loading) ? (
                             <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
                         ) : (
