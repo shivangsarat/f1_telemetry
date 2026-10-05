@@ -1,124 +1,63 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 import { useRaceStore } from '../store/useRaceStore';
 import { WeatherCard, SessionBestsCard, RaceControlWidget, DriverExpandedRow } from '../Components/DashboardWidgets';
-import { getTyreColor, computeLiveChampionship } from '../Utils/helpers';
+import { getTyreColor } from '../Utils/helpers';
 
 export const Dashboard = () => {
     const { sessionKey } = useParams();
     const navigate = useNavigate();
+    const isLiveSession = sessionKey === 'live';
 
-    // Use a state flag to track if this specific session is currently live
-    const [isLiveSession, setIsLiveSession] = useState(sessionKey === 'live');
-    
-    const [histData, setHistData] = useState<any>({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, availableSessions: [], loading: true });
+    const [histData, setHistData] = useState<any>({
+        results: [], weather: null, sessionBests: null, isRace: true,
+        maxRaceLap: 0, availableSessions: [], loading: !isLiveSession
+    });
     const [histRaceControl, setHistRaceControl] = useState<any[]>([]);
     const [latestToast, setLatestToast] = useState<any>(null);
-    const hasConnected = useRef(false);
 
-    const { intervals: liveResults, weather: liveWeather, sessionBests: liveBests, isRace: liveIsRace, maxRaceLap: liveMaxLap, raceControl: liveRc, connect } = useRaceStore();
+    const connect = useRaceStore(state => state.connect);
+    const liveRace = useRaceStore(state => state.liveRace);
 
     useEffect(() => {
-        setHistData({ results: [], weather: null, sessionBests: null, isRace: true, maxRaceLap: 0, availableSessions: [], loading: true });
-        
-        // Reset connection tracker if we navigate to a new page
-        hasConnected.current = false; 
+        if (isLiveSession) {
+            connect();
+            return;
+        }
 
-        const effectiveKey = sessionKey === 'live' ? 'latest' : sessionKey;
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
+        setHistData(prev => ({ ...prev, loading: true }));
 
         Promise.all([
-            fetch(`${API_BASE}/api/race-details/${effectiveKey}`).then(r => r.json()),
-            fetch(`${API_BASE}/api/race-control/${effectiveKey}`).then(r => r.json())
+            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json()),
+            fetch(`${API_BASE}/api/race-control/${sessionKey}`).then(r => r.json())
         ]).then(([data, rcData]) => {
-            
-            const activeKey = data.active_session_key ? String(data.active_session_key) : null;
-            
-            // Determine if the session we just loaded is currently live on the track
-            const isCurrentlyLive = sessionKey === 'live' || (activeKey && activeKey === String(sessionKey)) as boolean;
-            setIsLiveSession(isCurrentlyLive);
-
-            // Connect WebSocket if it's a live session
-            if (isCurrentlyLive && !hasConnected.current) {
-                connect();
-                hasConnected.current = true;
-            }
-
             setHistData({ ...data, loading: false });
             setHistRaceControl(rcData);
-        }).catch(() => setHistData((prev: any) => ({ ...prev, loading: false })));
-    }, [sessionKey, connect]);
+        }).catch(() => setHistData(prev => ({ ...prev, loading: false })));
+    }, [sessionKey, isLiveSession, connect]);
 
-    // --- SMART MERGE: Combine Rich Historical Data with Live Telemetry Updates ---
-    const activeResults = useMemo(() => {
-        if (!isLiveSession || !liveResults || liveResults.length === 0) {
-            return histData.results || [];
-        }
-        
-        // Map over the rich base data and overlay the live dynamic fields
-        return (histData.results || []).map((histDriver: any) => {
-            const liveDriver = liveResults.find((d: any) => String(d.driver_number) === String(histDriver.driver_number));
-            if (liveDriver) {
-                return {
-                    ...histDriver, // Keeps team colors, names, pit stops, historical stints
-                    ...liveDriver, // Overwrites with live position, interval, gap, lap times
-                };
-            }
-            return histDriver;
-        }).sort((a: any, b: any) => {
-            // Re-sort the table dynamically based on live position changes
-            const posA = Number(a.position || a.official_position || 99);
-            const posB = Number(b.position || b.official_position || 99);
-            return posA - posB;
-        });
-    }, [isLiveSession, liveResults, histData.results]);
+    const activeResults = isLiveSession ? (liveRace?.results || []) : (histData.results || []);
+    const activeWeather = isLiveSession ? liveRace?.weather : histData.weather;
+    const activeBests = isLiveSession ? liveRace?.sessionBests : histData.sessionBests;
+    const isRaceMode = isLiveSession ? Boolean(liveRace?.isRace) : Boolean(histData.isRace);
+    const activeMaxLap = isLiveSession ? Number(liveRace?.maxRaceLap || 0) : Number(histData.maxRaceLap || 0);
+    const activeRaceControl = isLiveSession ? (liveRace?.raceControl || []) : histRaceControl;
+    const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
 
-    
-
-    // Fallback logic for secondary widgets
-    const activeWeather = (isLiveSession && liveWeather) ? liveWeather : histData.weather;
-    const activeBests = (isLiveSession && liveBests) ? liveBests : histData.sessionBests;
-    const isRaceMode = (isLiveSession && liveResults && liveResults.length > 0) ? liveIsRace : histData.isRace;
-    const activeMaxLap = (isLiveSession && liveMaxLap > 0) ? liveMaxLap : histData.maxRaceLap;
-    const activeRaceControl = (isLiveSession && liveRc && liveRc.length > 0) ? liveRc : histRaceControl;
-
-    const liveStandings = useMemo(() => {
-        if (!isLiveSession || !isRaceMode) return null;
-        return computeLiveChampionship(activeResults, false);
-    }, [activeResults, isLiveSession, isRaceMode]);
-
-    // Toast Notification Handler
     useEffect(() => {
-        if (isLiveSession && activeRaceControl && activeRaceControl.length > 0) {
+        if (isLiveSession && activeRaceControl.length > 0) {
             const newest = activeRaceControl[0];
-            setLatestToast((prev: any) => {
-                if (!prev || prev.date !== newest.date) return newest;
-                return prev;
-            });
+            setLatestToast(prev => (!prev || prev.date !== newest.date ? newest : prev));
         }
     }, [activeRaceControl, isLiveSession]);
 
-    // Auto-hide Toast after 10 seconds
     useEffect(() => {
-        if (latestToast) {
-            const timer = setTimeout(() => {
-                setLatestToast(null);
-            }, 10000);
-            return () => clearTimeout(timer);
-        }
+        if (!latestToast) return;
+        const timer = setTimeout(() => setLatestToast(null), 10000);
+        return () => clearTimeout(timer);
     }, [latestToast]);
-
-    // useEffect(() => {
-    //     if (isLive && activeRaceControl.length > 0) {
-    //         const newest = activeRaceControl[0];
-    //         if (!latestToast || newest.date !== latestToast.date) {
-    //             setLatestToast(newest);
-    //             const t = setTimeout(() => setLatestToast(null), 8000);
-    //             return () => clearTimeout(t);
-    //         }
-    //     }
-    // }, [activeRaceControl, isLive, latestToast]);
 
     const driverColumns = useMemo(() => [
         { 
@@ -202,7 +141,7 @@ export const Dashboard = () => {
                         <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
                         
                         <div className="flex gap-2 bg-gray-900/50 p-1 rounded-lg">
-                            {histData.availableSessions.map((s: any) => {
+                            {availableSessions.map((s: any) => {
                                 const isFuture = new Date(s.date_start).getTime() > Date.now();
                                 const isActive = sessionKey === String(s.session_key);
 
@@ -242,14 +181,14 @@ export const Dashboard = () => {
 
                 <div className="bg-gray-900 rounded-xl border border-gray-800 flex-1 flex flex-col overflow-hidden shadow-2xl">
                     <div className="overflow-y-auto flex-1 custom-scrollbar relative">
-                        {histData.loading ? (
+                        {(isLiveSession ? !liveRace : histData.loading) ? (
                             <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
                         ) : (
                             <Table 
                                 data={activeResults || []} 
                                 columns={driverColumns} 
                                 getRowKey={(row: any) => row.driver_number}
-                                expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={liveStandings} />}
+                                expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={undefined} />}
                             />
                         )}
                     </div>
