@@ -23,56 +23,53 @@ export class FreeFastF1Provider implements ITelemetryProvider {
                 resolve();
             });
 
-            this.ws.on('message', (raw) => {
+            this.ws.on('message', raw => {
                 try {
                     const data = JSON.parse(raw.toString());
-                    
-                    if (data.race_control && this.callbacks?.onRaceControl) {
-                        this.callbacks.onRaceControl(data.race_control);
+
+                    if (data.race_control) {
+                        this.callbacks?.onStreamData?.('race_control', data.race_control);
+                        this.callbacks?.onRaceControl?.(data.race_control);
                     }
 
                     if (data.telemetry?.Entries) {
-                        const entries = data.telemetry.Entries;
                         for (const driverNum of this.subscribedDrivers) {
-                            const car = entries[0]?.Cars?.[driverNum.toString()];
-                            if (car && this.callbacks) {
-                                const ch = car.Channels;
-                                this.callbacks.onTelemetry(driverNum, {
-                                    lapX: Date.now(),
-                                    rpm: ch['0'] || 0,
-                                    speed: ch['2'] || 0,
-                                    gear: ch['3'] || 0,
-                                    throttle: ch['4'] || 0,
-                                    brake: ch['5'] || 0
-                                });
-                            }
+                            const car = data.telemetry.Entries[0]?.Cars?.[String(driverNum)];
+                            if (!car) continue;
+                            const ch = car.Channels || {};
+                            this.callbacks?.onTelemetry?.(driverNum, {
+                                lapX: Date.now(),
+                                speed: Number(ch['2'] || 0),
+                                rpm: Number(ch['0'] || 0),
+                                gear: Number(ch['3'] || 0),
+                                throttle: Number(ch['4'] || 0),
+                                brake: Number(ch['5'] || 0)
+                            });
                         }
                     }
-                } catch (e) {
-                    this.callbacks?.onError?.(e);
+                } catch (error) {
+                    this.callbacks?.onError?.(error);
                 }
             });
 
-            this.ws.on('error', (err) => {
-                console.warn(`⚠️ [${this.name}] Connection issue:`, err.message);
-                reject(err);
+            this.ws.on('error', error => {
+                this.callbacks?.onError?.(error);
+                reject(error);
             });
         });
     }
 
-    subscribeDriver(driverNumber: number): void {
+    subscribeDriver(driverNumber: number) {
         this.subscribedDrivers.add(driverNumber);
     }
 
-    unsubscribeDriver(driverNumber: number): void {
+    unsubscribeDriver(driverNumber: number) {
         this.subscribedDrivers.delete(driverNumber);
     }
 
-    disconnect(): void {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
+    disconnect() {
+        this.ws?.close();
+        this.ws = null;
         this.subscribedDrivers.clear();
     }
 }
