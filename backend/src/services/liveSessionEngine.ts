@@ -54,6 +54,23 @@ export class LiveSessionEngine {
     private readonly carData = new Map<number, any[]>();
     private readonly maps = new Map<string, Map<string, any>>();
 
+    hydrate(calculated: any, sessionKey?: string | number | null) {
+        if (!calculated || typeof calculated !== 'object') return;
+        if (sessionKey != null) this.activeSessionKey = String(sessionKey);
+
+        this.state.sessionInfo = calculated.sessionInfo || this.state.sessionInfo;
+        this.state.weather = calculated.weather ?? this.state.weather;
+        this.state.raceControl = calculated.raceControl || this.state.raceControl;
+        this.state.championshipDrivers = calculated.championshipDrivers || this.state.championshipDrivers;
+        this.state.championshipTeams = calculated.championshipTeams || this.state.championshipTeams;
+
+        // The REST bootstrap is already calculated by the same pure layer. Preserve
+        // it until the MQTT collections have enough raw state to replace it.
+        this.bootstrapSnapshot = calculated;
+    }
+
+    private bootstrapSnapshot: any | null = null;
+
     constructor() {
         ['drivers', 'intervals', 'position', 'laps', 'stints', 'pit', 'championship_drivers', 'championship_teams', 'session_result'].forEach(topic => {
             this.maps.set(topic, new Map());
@@ -146,6 +163,7 @@ export class LiveSessionEngine {
         };
         this.maps.forEach(map => map.clear());
         this.carData.clear();
+        this.bootstrapSnapshot = null;
     }
 
     private syncCollection(topic: string) {
@@ -215,6 +233,16 @@ export class LiveSessionEngine {
     }
 
     getSnapshot() {
+        const hasStreamState = this.state.drivers.length > 0 || this.state.laps.length > 0 || this.state.positions.length > 0;
+        if (!hasStreamState && this.bootstrapSnapshot) {
+            return {
+                type: 'LIVE_RACE_STATE',
+                sessionKey: this.activeSessionKey,
+                timestamp: Date.now(),
+                data: this.bootstrapSnapshot
+            };
+        }
+
         const calculated = calculateRaceView({
             sessionInfo: this.state.sessionInfo,
             drivers: this.state.drivers,
