@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useLayoutEffect, useCallback, useMemo } fr
 import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
-import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart } from '../Components/DashboardWidgets';
+import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart, AllDriversLapTimesChart } from '../Components/DashboardWidgets';
 import { SectorBlock } from '../Components/TelemetryWidgets';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -511,6 +511,11 @@ export const DriverProfile = () => {
                         </div>
 
                     </div>
+
+                    <AllDriversLapTimesChart
+                        activeResults={activeResults}
+                        maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                    />
                 </div>
             </div>
         </div>
