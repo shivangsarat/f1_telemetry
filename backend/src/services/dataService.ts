@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { CONFIG, OPENF1_BASE, ERGAST_BASE } from '../config';
-import { processTelemetry } from './telemetryProcessor';
-import { calculateRaceView } from '../calculations/raceCalculations';
+import { calculateRaceView, buildTelemetryHistory } from '../calculations/raceCalculations';
 
 // --- NEW AUTHENTICATION MANAGER ---
 let sharedToken: string | null = null;
@@ -402,7 +401,7 @@ export const getCleanTelemetry = async (sessionKey: string, driverNumber: number
     const stints = await getCached(`stints_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}&driver_number=${driverNumber}`));
     
     return {
-        telemetry: processTelemetry(carData?.data || [], laps?.data || []),
+        telemetry: buildTelemetryHistory(carData?.data || [], laps?.data || []),
         laps: laps?.data || [],
         stints: stints?.data || []
     };
