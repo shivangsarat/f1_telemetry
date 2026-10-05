@@ -374,10 +374,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
     });
     const driverName = (n: any) => driverInfoByNumber.get(String(n))?.name_acronym || String(n ?? '-');
     const sessionBests = {
-        lap: { time: formatLapTime(sessionBestsRaw.lap.time), driver: driverName(sessionBestsRaw.lap.driver) },
-        s1: { time: Number.isFinite(sessionBestsRaw.s1.time) ? sessionBestsRaw.s1.time.toFixed(3) : '-', driver: driverName(sessionBestsRaw.s1.driver) },
-        s2: { time: Number.isFinite(sessionBestsRaw.s2.time) ? sessionBestsRaw.s2.time.toFixed(3) : '-', driver: driverName(sessionBestsRaw.s2.driver) },
-        s3: { time: Number.isFinite(sessionBestsRaw.s3.time) ? sessionBestsRaw.s3.time.toFixed(3) : '-', driver: driverName(sessionBestsRaw.s3.driver) }
+        lap: { time: formatLapTime(sessionBestsRaw.lap.time), raw: Number.isFinite(sessionBestsRaw.lap.time) ? sessionBestsRaw.lap.time : null, driver: driverName(sessionBestsRaw.lap.driver) },
+        s1: { time: Number.isFinite(sessionBestsRaw.s1.time) ? sessionBestsRaw.s1.time.toFixed(3) : '-', raw: Number.isFinite(sessionBestsRaw.s1.time) ? sessionBestsRaw.s1.time : null, driver: driverName(sessionBestsRaw.s1.driver) },
+        s2: { time: Number.isFinite(sessionBestsRaw.s2.time) ? sessionBestsRaw.s2.time.toFixed(3) : '-', raw: Number.isFinite(sessionBestsRaw.s2.time) ? sessionBestsRaw.s2.time : null, driver: driverName(sessionBestsRaw.s2.driver) },
+        s3: { time: Number.isFinite(sessionBestsRaw.s3.time) ? sessionBestsRaw.s3.time.toFixed(3) : '-', raw: Number.isFinite(sessionBestsRaw.s3.time) ? sessionBestsRaw.s3.time : null, driver: driverName(sessionBestsRaw.s3.driver) }
     };
 
     const speedByDriver: Record<string, number> = {};
