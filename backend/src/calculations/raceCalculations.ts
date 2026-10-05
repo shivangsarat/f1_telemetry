@@ -118,6 +118,18 @@ const earliestByDriver = (rows: any[] = []) => rows.reduce((acc: Record<string, 
     return acc;
 }, {});
 
+const latestFiniteByDriver = (rows: any[] = [], fields: string[]) => {
+    const sorted = [...rows].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+    const result: Record<string, any> = {};
+    for (const row of sorted) {
+        const d = String(row.driver_number);
+        if (result[d]) continue;
+        const found = fields.find(field => row[field] !== null && row[field] !== undefined && row[field] !== '' && Number.isFinite(Number(row[field])));
+        if (found) result[d] = row[found];
+    }
+    return result;
+};
+
 const calculatePartialLapProgress = (lap: any) => {
     if (!lap || num(lap.lap_duration) > 0) return 0;
     const s1 = num(lap.duration_sector_1);
@@ -227,6 +239,8 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
     const latestPositions = latestByDriver(positions);
     const initialPositions = earliestByDriver(positions);
     const latestIntervals = latestByDriver(intervals);
+    const latestIntervalValues = latestFiniteByDriver(intervals, ['interval']);
+    const latestGapValues = latestFiniteByDriver(intervals, ['gap_to_leader', 'gap']);
 
     const maxRaceLap = Math.max(
         1,
@@ -247,8 +261,39 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         const interval = latestIntervals[String(d)] || {};
         const result = sessionResultByDriver.get(String(d)) || {};
         const position = num(latestPositions[String(d)]?.position, num(result.position, num(initialPositions[String(d)]?.position, 99)));
-        return { ...info, ...interval, ...result, driver_number: d, position };
+
+        // Do not let a newer null interval/gap sample erase the last valid value.
+        // OpenF1 can legitimately emit nulls during pit/position transitions.
+        const intervalValue = latestIntervalValues[String(d)] ?? interval.interval ?? result.interval;
+        const gapValue = latestGapValues[String(d)] ?? interval.gap_to_leader ?? interval.gap ?? result.gap_to_leader ?? result.gap;
+
+        return {
+            ...info,
+            ...interval,
+            ...result,
+            driver_number: d,
+            position,
+            interval: intervalValue,
+            gap_to_leader: gapValue
+        };
     });
+
+    // If OpenF1 has a valid gap-to-leader but no interval for a car, reconstruct
+    // the interval from the adjacent car's gap. This prevents '-' for otherwise
+    // valid midfield cars when a single interval sample is null.
+    const orderedByPosition = [...driverRows]
+        .filter(d => Number.isFinite(Number(d.position)) && Number(d.position) < 99)
+        .sort((a, b) => Number(a.position) - Number(b.position));
+
+    for (let i = 1; i < orderedByPosition.length; i++) {
+        const current = orderedByPosition[i];
+        const ahead = orderedByPosition[i - 1];
+        if (!Number.isFinite(Number(current.interval))
+            && Number.isFinite(Number(current.gap_to_leader))
+            && Number.isFinite(Number(ahead.gap_to_leader))) {
+            current.interval = Number(current.gap_to_leader) - Number(ahead.gap_to_leader);
+        }
+    }
 
     const sessionBestsRaw = {
         lap: { time: Infinity, driver: null as any },
