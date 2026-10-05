@@ -412,7 +412,7 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
                 consistencyStdDev
             },
             liveBattle: { target: null, threat: null },
-            latestPit: dPits.length ? dPits[dPits.length - 1] : null,
+            latestPit: dPits.length ? { ...dPits[dPits.length - 1], lap: num(dPits[dPits.length - 1].lap_number ?? dPits[dPits.length - 1].lap) } : null,
             championship,
             tyreHistory,
             lapsHistory
