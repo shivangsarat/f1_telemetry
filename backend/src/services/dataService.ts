@@ -454,6 +454,30 @@ export const getRaceDetails = async (sessionKey: string) => {
         const driverMaxLapCompleted = dLapsCompleted.length > 0 ? Math.max(...dLapsCompleted.map((l: any) => l.lap_number)) : 0;
         const driverMaxLapStarted = dLapsAll.length > 0 ? Math.max(...dLapsAll.map((l: any) => l.lap_number)) : 0;
 
+        const driverPositions = (posRes.data || []).filter((p: any) => p.driver_number === dNum).sort((a:any, b:any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        const lapsHistory = dLapsCompleted.map((l: any) => {
+            // Convert OpenF1 date format to timestamp
+            const start = l.date_start ? new Date(l.date_start.replace(/(\.\d{3})\d+/, '$1').replace('+00:00', 'Z')).getTime() : 0;
+            const end = start + (l.lap_duration * 1000);
+            
+            let posAtLapEnd = initialPositions[dNum]?.position || 99;
+            for (const p of driverPositions) {
+                const pTime = new Date(p.date).getTime();
+                if (pTime <= end) {
+                    posAtLapEnd = p.position;
+                } else {
+                    break;
+                }
+            }
+            
+            return {
+                lap_number: l.lap_number,
+                lap_duration: l.lap_duration,
+                position: posAtLapEnd
+            };
+        });
+
         const stints = dStints.map((s: any, idx: number, arr: any[]) => {
             const startLap = s.lap_start;
             let endLap = s.lap_end;
@@ -610,6 +634,7 @@ export const getRaceDetails = async (sessionKey: string) => {
             stints, total_laps: maxRaceLap, official_position: officialPosition, pos_change: posChange, status,
             driver_laps: driverMaxLapCompleted,
             analytics,
+            lapsHistory,
             liveBattle,
             latestPit,
             championship: currentChampionStanding,

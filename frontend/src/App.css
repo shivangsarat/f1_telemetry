@@ -1,3 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+    background-color: #000;
+    color: #fff;
+}
+
 .counter {
   font-size: 16px;
   padding: 5px 10px;

@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
 import { computeLiveChampionship } from '../Utils/helpers';
-import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget } from '../Components/DashboardWidgets';
+import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart } from '../Components/DashboardWidgets';
 import { SectorBlock } from '../Components/TelemetryWidgets';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -461,34 +461,25 @@ export const DriverProfile = () => {
                     )}
 
                     {/* EXPANDED PANEL: SPLIT INTO CURRENT LAP INFO (LEFT) & LAP HISTORY TABLE (RIGHT) */}
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 border-t border-gray-800 pt-4 mt-2">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 border-t border-gray-800 pt-4 mt-2 items-stretch h-[550px]">
                         
-                        {/* LEFT COLUMN: ACTIVE LAP DETAILS */}
-                        <div className="lg:col-span-5 flex flex-col justify-between bg-gray-800/20 p-4 rounded-lg border border-gray-800">
-                            <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <span className="text-sm font-bold text-gray-300 uppercase">LAP {activeLapNumber} INFO</span>
-                                    {activeStint && (
-                                        <div className="flex items-center gap-2 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
-                                            <div className="w-3 h-3 rounded-full border border-gray-500" style={{ backgroundColor: getTyreColor(activeStint.compound) }}></div>
-                                            <span className="text-xs font-bold text-gray-300 tracking-widest">{activeStint.compound}</span>
-                                        </div>
-                                    )}
-                                </div>
-                                {activeLapData ? renderSectorBlock(activeLapData) : (
-                                    <span className="text-xs text-gray-600 italic">Sector data unavailable for this lap</span>
-                                )}
-                            </div>
+                        {/* LEFT COLUMN: ALL DRIVERS POSITION CHART */}
+                        <div className="lg:col-span-5 flex flex-col justify-between bg-gray-800/20 p-4 rounded-lg border border-gray-800 h-full min-h-0">
+                            <AllDriversPaceChart 
+                                activeResults={activeResults} 
+                                currentDriverNumber={driverNumber} 
+                                maxRaceLap={raceDetails?.maxRaceLap || activeData.laps?.length || 1} 
+                            />
                         </div>
 
                         {/* RIGHT COLUMN: LAP HISTORY TABLE */}
-                        <div className="lg:col-span-7 bg-gray-800/20 p-4 rounded-lg border border-gray-800 flex flex-col">
+                        <div className="lg:col-span-7 bg-gray-800/20 p-4 rounded-lg border border-gray-800 flex flex-col h-full min-h-0">
                             <div className="flex justify-between items-center mb-3">
                                 <span className="text-sm font-bold text-gray-300 uppercase tracking-wider">Lap History & Sectors</span>
                                 <span className="text-xs text-gray-500 font-mono">Total Laps: {activeData.laps?.length || 0}</span>
                             </div>
 
-                            <div className="max-h-48 overflow-y-auto pr-1 flex flex-col gap-2 custom-scrollbar">
+                            <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 custom-scrollbar min-h-0">
                                 {activeData.laps && activeData.laps.length > 0 ? (
                                     [...activeData.laps].reverse().map((lap: any) => {
                                         const lapDuration = lap.lap_duration;
