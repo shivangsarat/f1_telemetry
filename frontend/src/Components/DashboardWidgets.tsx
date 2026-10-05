@@ -601,3 +601,84 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
         </div>
     );
 };
+
+export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeResults: any[]; maxRaceLap: number }) => {
+    const chartRef = useRef<HTMLDivElement>(null);
+    const plotRef = useRef<uPlot | null>(null);
+    const [hiddenDrivers, setHiddenDrivers] = useState<Set<number>>(new Set());
+
+    useLayoutEffect(() => {
+        if (!chartRef.current || !activeResults?.length) return;
+
+        const maxLap = Math.max(
+            Number(maxRaceLap || 0),
+            ...activeResults.map(driver => Math.max(0, ...(driver.lapsHistory || []).map((lap: any) => Number(lap.lap_number || 0))))
+        );
+        if (!maxLap) return;
+
+        const x = Array.from({ length: maxLap }, (_, index) => index + 1);
+        const visibleResults = activeResults.filter(driver => !hiddenDrivers.has(Number(driver.driver_number)));
+        const data: uPlot.AlignedData = [x];
+        const series: uPlot.Series[] = [{ label: 'Lap' }];
+
+        visibleResults.forEach(driver => {
+            const byLap = new Map((driver.lapsHistory || []).map((lap: any) => [Number(lap.lap_number), Number(lap.lap_duration)]));
+            data.push(x.map(lap => byLap.get(lap) ?? null));
+            series.push({
+                label: driver.name || String(driver.driver_number),
+                stroke: `#${driver.team_color || 'ffffff'}`,
+                width: 2,
+                points: { show: false },
+                spanGaps: false,
+                value: (_u, value) => value == null ? '--' : `${Number(value).toFixed(3)}s`
+            });
+        });
+
+        plotRef.current?.destroy();
+        plotRef.current = new uPlot({
+            width: chartRef.current.clientWidth || 1000,
+            height: 420,
+            legend: { show: false },
+            cursor: { x: true, y: true },
+            axes: [
+                { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP' },
+                { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP TIME (s)' }
+            ],
+            series,
+            scales: { x: { time: false }, y: { auto: true } }
+        }, data, chartRef.current);
+
+        return () => {
+            plotRef.current?.destroy();
+            plotRef.current = null;
+        };
+    }, [activeResults, maxRaceLap, hiddenDrivers]);
+
+    return (
+        <div className="w-full bg-gray-900 p-5 rounded-xl border border-gray-800">
+            <div className="flex items-center justify-between mb-3 border-b border-gray-700/60 pb-2">
+                <span className="text-gray-300 font-bold uppercase tracking-widest text-sm">LAP TIMES — ALL DRIVERS</span>
+                <div className="flex flex-wrap justify-end gap-1.5 max-w-[75%]">
+                    {activeResults.map(driver => {
+                        const driverNumber = Number(driver.driver_number);
+                        const hidden = hiddenDrivers.has(driverNumber);
+                        return (
+                            <button
+                                key={driverNumber}
+                                onClick={() => setHiddenDrivers(previous => {
+                                    const next = new Set(previous);
+                                    hidden ? next.delete(driverNumber) : next.add(driverNumber);
+                                    return next;
+                                })}
+                                className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider border transition ${hidden ? 'text-gray-600 border-gray-800' : 'text-gray-200 border-gray-700 hover:border-gray-500'}`}
+                            >
+                                {driver.name || driverNumber}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+            <div ref={chartRef} className="w-full" />
+        </div>
+    );
+};
