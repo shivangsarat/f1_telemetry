@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useLayoutEffect, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useLayoutEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
