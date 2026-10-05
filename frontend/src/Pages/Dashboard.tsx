@@ -29,12 +29,11 @@ export const Dashboard = () => {
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
         setHistData(prev => ({ ...prev, loading: true }));
 
-        Promise.all([
-            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json()),
-            fetch(`${API_BASE}/api/race-control/${sessionKey}`).then(r => r.json())
-        ]).then(([data, rcData]) => {
-            setHistData({ ...data, loading: false });
-            setHistRaceControl(rcData);
+        fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
+            .then(data => {
+                setHistData({ ...data, loading: false });
+                setHistRaceControl(data.raceControl || []);
+            })
         }).catch(() => setHistData(prev => ({ ...prev, loading: false })));
     }, [sessionKey, isLiveSession, connect]);
 
