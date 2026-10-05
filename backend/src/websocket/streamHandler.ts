@@ -4,6 +4,7 @@ import { ITelemetryProvider } from '../providers/ITelemetryProvider';
 import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
+import { getRaceDetails } from '../services/dataService';
 
 export const setupWebSocket = async (server: any) => {
     const wss = new WebSocketServer({ server });
@@ -22,6 +23,19 @@ export const setupWebSocket = async (server: any) => {
         );
     } else {
         provider = new FreeFastF1Provider(CONFIG.FASTF1_WS_URL);
+    }
+
+    // MQTT only delivers messages published after subscription. Hydrate the
+    // backend once from REST so a client joining mid-session immediately gets the
+    // current race state; all subsequent updates remain WebSocket/MQTT streaming.
+    if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
+        try {
+            const initial = await getRaceDetails('latest');
+            engine.hydrate(initial, initial.active_session_key ?? initial.sessionInfo?.session_key);
+            console.log('🏁 [Live Engine] Initial live state hydrated from REST.');
+        } catch (error: any) {
+            console.warn('⚠️ [Live Engine] REST hydration failed; continuing stream-only:', error?.message || error);
+        }
     }
 
     await provider.connect({
