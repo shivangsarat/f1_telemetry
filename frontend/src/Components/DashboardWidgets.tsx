@@ -1,5 +1,5 @@
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
-import { getFlagTheme, getTyreColor, getF1Points } from '../Utils/helpers';
+import { getFlagTheme, getTyreColor } from '../Utils/helpers';
 import { SectorBlock } from './TelemetryWidgets';
 import { useRaceStore } from '../store/useRaceStore';
 import uPlot from 'uplot';
@@ -121,25 +121,12 @@ export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: an
     const pointsBefore = driver.championship?.pointsStart ?? 0;
     const posStart = driver.championship?.position !== '-' ? driver.championship?.position : '-';
 
-    let pointsAddition = 0;
-    let pointsAfter = 0;
-    let projectedPos = '-';
-    let posChange = 0;
-    let isFinished = false;
-
-    if (driver.championship) {
-        const stats = driver.championship;
-        pointsAddition = stats.pointsAddition ?? 0;
-        pointsAfter = stats.pointsAfter ?? pointsBefore;
-        projectedPos = stats.projectedPos ?? '-';
-        posChange = stats.posChange ?? 0;
-        isFinished = Boolean(stats.isFinished);
-    } else {
-        const currentPos = driver.position || driver.official_position || 99;
-        isFinished = driver.status === 'Finished' || driver.status === 'Classified';
-        pointsAddition = getF1Points(currentPos, false);
-        pointsAfter = isFinished ? (driver.championship?.points ?? (pointsBefore + pointsAddition)) : pointsBefore + pointsAddition;
-    }
+    const stats = driver.championship || {};
+    const pointsAddition = stats.pointsAddition ?? 0;
+    const pointsAfter = stats.pointsAfter ?? stats.points ?? pointsBefore;
+    const projectedPos = stats.projectedPos ?? stats.positionEnd ?? '-';
+    const posChange = stats.posChange ?? 0;
+    const isFinished = Boolean(stats.isFinished || driver.status === 'Finished' || driver.status === 'Classified');
 
     return (
         <div className="flex flex-col gap-1.5 h-full">
