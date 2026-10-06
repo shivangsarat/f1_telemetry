@@ -10,6 +10,11 @@ type LiveRaceData = {
     availableSessions: any[];
     sessionName?: string;
     sessionInfo?: any;
+    tracker?: {
+        trace: any[];
+        cars: any[];
+        referenceDriver?: number | null;
+    };
 };
 
 type DriverLiveData = {
@@ -65,7 +70,8 @@ export const useRaceStore = create<RaceState>((set) => ({
                             raceControl: msg.data.raceControl || [],
                             availableSessions: msg.data.availableSessions || [],
                             sessionName: msg.data.sessionName,
-                            sessionInfo: msg.data.sessionInfo
+                            sessionInfo: msg.data.sessionInfo,
+                            tracker: msg.data.tracker || { trace: [], cars: [] }
                         }
                     });
                 }
