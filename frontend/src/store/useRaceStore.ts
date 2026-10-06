@@ -14,6 +14,12 @@ type LiveRaceData = {
         trace: any[];
         cars: any[];
         referenceDriver?: number | null;
+        circuit?: {
+            name?: string | null;
+            image?: string | null;
+            rotation?: number;
+            corners?: any[];
+        };
     };
 };
 
