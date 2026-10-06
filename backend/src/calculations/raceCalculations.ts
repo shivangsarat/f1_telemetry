@@ -273,7 +273,7 @@ const calculateProjectedChampionship = (drivers: any[], championship: any[], isS
     return result;
 };
 
-export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = []) => {
+export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], locations: any[] = []) => {
     const orderedLaps = [...laps].sort((a, b) => num(a.lap_number) - num(b.lap_number));
     if (!orderedLaps.length) return [];
 
@@ -283,12 +283,46 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = []) => 
     const orderedCarData = [...carData]
         .filter(t => t.date)
         .sort((a, b) => parseDate(a.date) - parseDate(b.date));
+    const orderedLocations = [...locations]
+        .filter(location => location.date && Number.isFinite(Number(location.x)) && Number.isFinite(Number(location.y)))
+        .sort((a, b) => parseDate(a.date) - parseDate(b.date));
 
-    // Approximate longitudinal acceleration from speed delta over time.
-    // OpenF1 speed is km/h, so convert to m/s before differentiating.
-    // A small EMA reduces telemetry jitter while keeping braking/acceleration responsive.
+    const locationDynamics: Array<{ time: number; headingRate: number }> = [];
+    const normalizeAngle = (angle: number) => {
+        let value = angle;
+        while (value > Math.PI) value -= 2 * Math.PI;
+        while (value < -Math.PI) value += 2 * Math.PI;
+        return value;
+    };
+
+    let previousHeading: number | null = null;
+    let previousHeadingTime: number | null = null;
+    for (let i = 1; i < orderedLocations.length; i++) {
+        const previous = orderedLocations[i - 1];
+        const current = orderedLocations[i];
+        const dx = num(current.x) - num(previous.x);
+        const dy = num(current.y) - num(previous.y);
+        if (Math.hypot(dx, dy) < 1) continue;
+
+        const heading = Math.atan2(dy, dx);
+        const currentTime = parseDate(current.date);
+        if (previousHeading !== null && previousHeadingTime !== null) {
+            const dt = (currentTime - previousHeadingTime) / 1000;
+            if (dt >= 0.05 && dt <= 2) {
+                locationDynamics.push({
+                    time: currentTime,
+                    headingRate: normalizeAngle(heading - previousHeading) / dt
+                });
+            }
+        }
+        previousHeading = heading;
+        previousHeadingTime = currentTime;
+    }
+
+    let dynamicsIndex = 0;
     let previousTelemetry: any = null;
     let smoothedLongitudinalG = 0;
+    let smoothedLateralG = 0;
 
     const points = orderedCarData
         .map(t => {
@@ -319,17 +353,30 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = []) => 
                 if (dtSeconds >= 0.02 && dtSeconds <= 2) {
                     const dvMetersPerSecond = (speed - previousTelemetry.speed) / 3.6;
                     const rawG = (dvMetersPerSecond / dtSeconds) / 9.80665;
-
-                    // Reject obvious timestamp/data spikes; an F1 car can reach several G
-                    // longitudinally, but values beyond this are almost certainly feed noise.
                     const boundedG = Math.max(-8, Math.min(8, rawG));
-                    const alpha = 0.35;
-                    smoothedLongitudinalG = (alpha * boundedG) + ((1 - alpha) * smoothedLongitudinalG);
+                    smoothedLongitudinalG = (0.35 * boundedG) + (0.65 * smoothedLongitudinalG);
                     longitudinalG = smoothedLongitudinalG;
                 }
             }
 
+            while (
+                dynamicsIndex < locationDynamics.length - 1
+                && Math.abs(locationDynamics[dynamicsIndex + 1].time - time) <= Math.abs(locationDynamics[dynamicsIndex].time - time)
+            ) {
+                dynamicsIndex++;
+            }
+
+            let lateralG = smoothedLateralG;
+            const nearest = locationDynamics[dynamicsIndex];
+            if (nearest && Math.abs(nearest.time - time) <= 1500) {
+                const rawLateralG = ((speed / 3.6) * nearest.headingRate) / 9.80665;
+                const boundedLateralG = Math.max(-8, Math.min(8, rawLateralG));
+                smoothedLateralG = (0.25 * boundedLateralG) + (0.75 * smoothedLateralG);
+                lateralG = smoothedLateralG;
+            }
+
             previousTelemetry = { time, speed };
+            const totalG = Math.sqrt((longitudinalG ** 2) + (lateralG ** 2));
 
             return {
                 lapX,
@@ -340,14 +387,16 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = []) => 
                 rpm: num(t.rpm),
                 gear: num(t.n_gear),
                 drs: t.drs ?? 0,
-                longitudinalG: Number(longitudinalG.toFixed(2))
+                longitudinalG: Number(longitudinalG.toFixed(2)),
+                lateralG: Number(lateralG.toFixed(2)),
+                totalG: Number(totalG.toFixed(2))
             };
         })
         .filter(Boolean) as any[];
 
     const result: any[] = [];
     let lastX = -1;
-    for (const point of points.sort((a, b) => a.lapX - b.lapX)) {
+    for (const point of points.sort((x, y) => x.lapX - y.lapX)) {
         if (point.lapX > lastX) {
             result.push(point);
             lastX = point.lapX;
