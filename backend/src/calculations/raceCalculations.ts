@@ -49,58 +49,140 @@ export const getF1Points = (position: number, isSprint = false) => {
 };
 
 export const buildTyreHistory = (rawStints: any[] = [], rawPitStops: any[] = [], lapLimit: number) => {
-    const pitStops = rawPitStops
-        .map(p => ({ ...p, lap: num(p.lap_number ?? p.lap) }))
-        .filter(p => p.lap > 0)
-        .sort((a, b) => a.lap - b.lap);
+    const effectiveLapLimit = Math.max(1, num(lapLimit, 1));
 
-    const sourceStints = rawStints
-        .filter(s => num(s.lap_start) > 0)
-        .sort((a, b) => num(a.lap_start) - num(b.lap_start));
+    // One physical pit stop should create one tyre boundary. Prefer the most
+    // complete record if duplicate stream/API rows exist for the same pit lap.
+    const pitByLap = new Map<number, any>();
+    for (const raw of rawPitStops || []) {
+        const lap = num(raw.lap_number ?? raw.lap, -1);
+        if (lap <= 0 || lap >= effectiveLapLimit) continue;
+
+        const normalized = { ...raw, lap };
+        const previous = pitByLap.get(lap);
+        if (!previous) {
+            pitByLap.set(lap, normalized);
+            continue;
+        }
+
+        const completeness = (p: any) =>
+            Number(p.stop_duration != null) +
+            Number(p.lane_duration != null) +
+            Number(p.pit_duration != null) +
+            Number(Boolean(p.date));
+
+        if (completeness(normalized) >= completeness(previous)) {
+            pitByLap.set(lap, normalized);
+        }
+    }
+
+    const pitStops = [...pitByLap.values()].sort((x, y) => x.lap - y.lap);
+
+    // Collapse repeated/updated stint rows. OpenF1 streaming can publish the same
+    // stint more than once as lap_end changes; the latest/most complete row wins.
+    const stintByIdentity = new Map<string, any>();
+    for (const raw of rawStints || []) {
+        const start = num(raw.lap_start, -1);
+        if (start <= 0) continue;
+
+        const identity = raw.stint_number != null
+            ? `stint:${raw.stint_number}`
+            : `start:${start}:${String(raw.compound || 'UNKNOWN')}`;
+
+        const previous = stintByIdentity.get(identity);
+        if (!previous) {
+            stintByIdentity.set(identity, raw);
+            continue;
+        }
+
+        const previousEnd = num(previous.lap_end, 0);
+        const nextEnd = num(raw.lap_end, 0);
+        if (nextEnd >= previousEnd || parseDate(raw.date) >= parseDate(previous.date)) {
+            stintByIdentity.set(identity, raw);
+        }
+    }
+
+    const sourceStints = [...stintByIdentity.values()]
+        .sort((x, y) => num(x.lap_start) - num(y.lap_start));
+
+    // With pit history available, pit laps are the authoritative tyre-change
+    // boundaries: a stop on lap N means the following stint starts on N+1.
+    // This prevents stray/overlapping stint rows from producing fake L2/L3
+    // boundaries while the actual pit history says L9/L33/L43.
+    const boundaries = pitStops.length > 0
+        ? [1, ...pitStops.map(p => p.lap + 1).filter(lap => lap > 1 && lap <= effectiveLapLimit), effectiveLapLimit + 1]
+        : [
+            Math.max(1, sourceStints.length ? num(sourceStints[0].lap_start, 1) : 1),
+            ...sourceStints.slice(1).map(stint => num(stint.lap_start)).filter(lap => lap > 1 && lap <= effectiveLapLimit),
+            effectiveLapLimit + 1
+        ];
+
+    const uniqueBoundaries = [...new Set(boundaries)]
+        .filter(lap => lap >= 1 && lap <= effectiveLapLimit + 1)
+        .sort((x, y) => x - y);
+
+    const chooseSourceStint = (start: number, end: number) => {
+        const exact = sourceStints.find(stint => num(stint.lap_start) === start);
+        if (exact) return exact;
+
+        const covering = [...sourceStints]
+            .filter(stint => {
+                const stintStart = num(stint.lap_start);
+                const stintEnd = num(stint.lap_end, effectiveLapLimit);
+                return stintStart <= start && (!stintEnd || stintEnd >= start);
+            })
+            .sort((x, y) => num(y.lap_start) - num(x.lap_start))[0];
+        if (covering) return covering;
+
+        const nearestBefore = [...sourceStints]
+            .filter(stint => num(stint.lap_start) <= start)
+            .sort((x, y) => num(y.lap_start) - num(x.lap_start))[0];
+        if (nearestBefore) return nearestBefore;
+
+        return sourceStints.find(stint => num(stint.lap_start) <= end) || null;
+    };
 
     const stints: any[] = [];
-    sourceStints.forEach((source, index) => {
-        const start = num(source.lap_start);
-        const nextStart = sourceStints[index + 1] ? num(sourceStints[index + 1].lap_start) : undefined;
-        let end = num(source.lap_end);
-        if (!end || end > lapLimit) end = nextStart ? nextStart - 1 : lapLimit;
-        if (nextStart !== undefined) end = Math.min(end, nextStart - 1);
-        if (end < start) return;
+    for (let i = 0; i < uniqueBoundaries.length - 1; i++) {
+        const start = uniqueBoundaries[i];
+        const end = Math.min(effectiveLapLimit, uniqueBoundaries[i + 1] - 1);
+        if (end < start) continue;
 
-        const splitStarts = pitStops
-            .map(p => p.lap + 1)
-            .filter(l => l > start && l <= end);
+        const source = chooseSourceStint(start, end);
+        const sourceStart = source ? num(source.lap_start, start) : start;
+        const exactNewStint = source && sourceStart === start;
 
-        const boundaries = [start, ...Array.from(new Set(splitStarts)).sort((a, b) => a - b), end + 1];
-        for (let i = 0; i < boundaries.length - 1; i++) {
-            const miniStart = boundaries[i];
-            const miniEnd = boundaries[i + 1] - 1;
-            if (miniEnd < miniStart) continue;
-            stints.push({
-                compound: source.compound || 'UNKNOWN',
-                start: miniStart,
-                end: miniEnd,
-                length: miniEnd - miniStart + 1,
-                tyre_age_at_start: num(source.tyre_age_at_start) + miniStart - start,
-                has_pit_before: pitStops.some(p => p.lap + 1 === miniStart)
-            });
-        }
+        stints.push({
+            compound: source?.compound || 'UNKNOWN',
+            start,
+            end,
+            length: end - start + 1,
+            tyre_age_at_start: source
+                ? num(source.tyre_age_at_start) + (exactNewStint ? 0 : Math.max(0, start - sourceStart))
+                : 0,
+            has_pit_before: i > 0 && pitStops.some(p => p.lap + 1 === start),
+            source_stint_number: source?.stint_number ?? null
+        });
+    }
+
+    const matchedPitStops = pitStops.map(pit => {
+        const nextStint = stints.find(stint => stint.start === pit.lap + 1);
+        return {
+            ...pit,
+            next_stint: nextStint ? {
+                compound: nextStint.compound,
+                start: nextStint.start,
+                end: nextStint.end,
+                length: nextStint.length
+            } : null
+        };
     });
 
+    // Keep both names temporarily so existing UI/data consumers continue to work.
     return {
         stints,
-        pitStops: pitStops.map(p => {
-            const nextStint = stints.find(s => s.start === p.lap + 1);
-            return {
-                ...p,
-                next_stint: nextStint ? {
-                    compound: nextStint.compound,
-                    start: nextStint.start,
-                    end: nextStint.end,
-                    length: nextStint.length
-                } : null
-            };
-        })
+        pitStops: matchedPitStops,
+        pit_stops: matchedPitStops
     };
 };
 
@@ -416,20 +498,9 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             return { lap_number: num(l.lap_number), lap_duration: num(l.lap_duration), position: positionAtEnd };
         });
 
-        const mappedStints = dStints.map((s, idx, arr) => {
-            const start = num(s.lap_start);
-            let end = num(s.lap_end);
-            const nextStart = arr[idx + 1] ? num(arr[idx + 1].lap_start) : 0;
-            if (nextStart > start) end = nextStart - 1;
-            if (!end || end > maxRaceLap) end = startedLapNumber || maxRaceLap;
-            return {
-                compound: s.compound || 'UNKNOWN',
-                start,
-                end,
-                length: Math.max(1, end - start + 1),
-                tyre_age_at_start: num(s.tyre_age_at_start)
-            };
-        });
+        const stintLapLimit = startedLapNumber || completedLapNumber || maxRaceLap;
+        const tyreHistory = buildTyreHistory(dStints, dPits, stintLapLimit);
+        const mappedStints = tyreHistory.stints;
 
         const officialPosition = num(latestPositions[String(dNum)]?.position, 99);
         const startingPosition = num(initialPositions[String(dNum)]?.position, officialPosition);
@@ -441,9 +512,9 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             ? `${Math.floor(totalSeconds / 3600) > 0 ? Math.floor(totalSeconds / 3600) + ':' : ''}${String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0')}:${(totalSeconds % 60).toFixed(3).padStart(6, '0')}`
             : '-';
 
-        const activeStint = dStints[dStints.length - 1] || null;
+        const activeStint = mappedStints[mappedStints.length - 1] || null;
         const currentCompound = activeStint?.compound || 'UNKNOWN';
-        const stintStart = num(activeStint?.lap_start, 1);
+        const stintStart = num(activeStint?.start ?? activeStint?.lap_start, 1);
         const currentStintLength = Math.max(0, startedLapNumber - stintStart + 1);
         const currentTyreAge = currentStintLength + num(activeStint?.tyre_age_at_start);
         const compoundMax = stints.filter(s => s.compound).reduce((acc: Record<string, number>, s) => {
@@ -464,7 +535,6 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         const mean = last5.length ? last5.reduce((a, b) => a + b, 0) / last5.length : 0;
         const variance = last5.length > 1 ? last5.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / last5.length : 0;
         const consistencyStdDev = Math.sqrt(variance);
-        const tyreHistory = buildTyreHistory(dStints, dPits, maxRaceLap);
         const championship = projectedChampionship[String(dNum)] || {
             pointsStart: 0, posStart: '-', pointsAfter: 0, pointsAddition: 0, projectedPos: '-', posChange: 0, isFinished: false
         };
