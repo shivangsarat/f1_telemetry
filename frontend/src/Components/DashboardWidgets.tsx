@@ -411,7 +411,7 @@ export const TyreHistoryWidget = ({ driver }: { driver: any }) => {
                                     </span>
                                 )}
 
-                                {i > 0 && (
+                                {stint.has_pit_before && (
                                     <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
                                         <div
                                             className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80"
