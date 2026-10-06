@@ -382,19 +382,19 @@ export const DriverProfile = () => {
                                     <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
                                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Long G</span>
                                         <span className={`font-mono text-sm font-black ${Number(latestTelemetry.longitudinalG || 0) < -0.15 ? 'text-red-400' : Number(latestTelemetry.longitudinalG || 0) > 0.15 ? 'text-green-400' : 'text-gray-300'}`}>
-                                            {Number(latestTelemetry.longitudinalG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.longitudinalG || 0).toFixed(2)}
+                                            {Number(latestTelemetry.longitudinalG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.longitudinalG || 0).toFixed(2)} G
                                         </span>
                                     </div>
                                     <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
                                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Lat G</span>
                                         <span className="font-mono text-sm font-black text-blue-300">
-                                            {Number(latestTelemetry.lateralG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.lateralG || 0).toFixed(2)}
+                                            {Number(latestTelemetry.lateralG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.lateralG || 0).toFixed(2)} G
                                         </span>
                                     </div>
                                     <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
                                         <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Total G</span>
                                         <span className="font-mono text-sm font-black text-white">
-                                            {Number(latestTelemetry.totalG || 0).toFixed(2)}
+                                            {Number(latestTelemetry.totalG || 0).toFixed(2)} G
                                         </span>
                                     </div>
                                 </div>
