@@ -499,6 +499,8 @@ export class MockOpenF1ReplayServer {
             if (!this.meeting) return res.json([]);
 
             const meeting = clone(this.meeting);
+            if (meeting.date_start) meeting.date_start = this.transformDate(meeting.date_start);
+            if (meeting.date_end) meeting.date_end = this.transformDate(meeting.date_end);
             if (meeting.circuit_info_url) {
                 meeting.circuit_info_url = `http://localhost:${CONFIG.MOCK_OPENF1_PORT}/circuit-info`;
             }
