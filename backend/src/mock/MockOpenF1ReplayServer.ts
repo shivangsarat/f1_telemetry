@@ -175,6 +175,77 @@ export class MockOpenF1ReplayServer {
         throw new Error('Could not find a completed race to replay.');
     }
 
+    private async loadHighVolumeTopic(topic: 'car_data' | 'location', sessionKey: any) {
+        const driverNumbers = [...new Set(
+            (this.dataset.drivers || [])
+                .map((driver: any) => Number(driver.driver_number))
+                .filter((driverNumber: number) => Number.isFinite(driverNumber))
+        )];
+
+        const rows: any[] = [];
+
+        for (const driverNumber of driverNumbers) {
+            try {
+                // OpenF1 rejects unbounded whole-grid telemetry/location queries.
+                // A driver filter is normally enough and keeps startup reasonably fast.
+                const response = await this.upstreamGet(
+                    `/${topic}?session_key=${sessionKey}&driver_number=${driverNumber}`
+                );
+                rows.push(...(Array.isArray(response.data) ? response.data : []));
+            } catch (error: any) {
+                if (error?.response?.status !== 422) throw error;
+
+                // Some long sessions still exceed the historical endpoint's response
+                // limit for one driver. Recursively split only those drivers by time.
+                const driverRows = await this.loadHighVolumeWindow(
+                    topic,
+                    sessionKey,
+                    driverNumber,
+                    this.sourceStart,
+                    this.sourceEnd,
+                    0
+                );
+                rows.push(...driverRows);
+            }
+
+            // Avoid hammering the historical API while loading many drivers.
+            await sleep(350);
+        }
+
+        rows.sort((a, b) => parseDate(a.date) - parseDate(b.date));
+        return rows;
+    }
+
+    private async loadHighVolumeWindow(
+        topic: 'car_data' | 'location',
+        sessionKey: any,
+        driverNumber: number,
+        startMs: number,
+        endMs: number,
+        depth: number
+    ): Promise<any[]> {
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
+
+        const start = new Date(startMs).toISOString();
+        const end = new Date(endMs).toISOString();
+        const path =
+            `/${topic}?session_key=${sessionKey}&driver_number=${driverNumber}` +
+            `&date>=${encodeURIComponent(start)}&date<${encodeURIComponent(end)}`;
+
+        try {
+            const response = await this.upstreamGet(path);
+            return Array.isArray(response.data) ? response.data : [];
+        } catch (error: any) {
+            if (error?.response?.status !== 422 || depth >= 8 || endMs - startMs <= 30_000) throw error;
+
+            const middle = Math.floor((startMs + endMs) / 2);
+            const left = await this.loadHighVolumeWindow(topic, sessionKey, driverNumber, startMs, middle, depth + 1);
+            await sleep(350);
+            const right = await this.loadHighVolumeWindow(topic, sessionKey, driverNumber, middle, endMs, depth + 1);
+            return [...left, ...right];
+        }
+    }
+
     private async loadDataset() {
         this.sourceSession = await this.resolveLastRace();
         const sessionKey = this.sourceSession.session_key;
@@ -187,17 +258,33 @@ export class MockOpenF1ReplayServer {
 
         this.dataset.sessions = [this.sourceSession];
 
-        for (const topic of STREAM_TOPICS.filter(topic => topic !== 'sessions')) {
-            const endpoint = topic;
+        // Load driver metadata first because high-volume telemetry endpoints
+        // need to be fetched per driver rather than as one enormous session query.
+        for (const topic of STREAM_TOPICS.filter(topic =>
+            topic !== 'sessions' && topic !== 'car_data' && topic !== 'location'
+        )) {
             try {
-                const response = await this.upstreamGet(`/${endpoint}?session_key=${sessionKey}`);
+                const response = await this.upstreamGet(`/${topic}?session_key=${sessionKey}`);
                 this.dataset[topic] = Array.isArray(response.data) ? response.data : [];
                 console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows`);
             } catch (error: any) {
                 this.dataset[topic] = [];
                 console.warn(`⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`, error?.message || error);
             }
-            await sleep(125);
+            await sleep(350);
+        }
+
+        for (const topic of ['car_data', 'location'] as const) {
+            try {
+                this.dataset[topic] = await this.loadHighVolumeTopic(topic, sessionKey);
+                console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows (per-driver historical fetch)`);
+            } catch (error: any) {
+                this.dataset[topic] = [];
+                console.warn(
+                    `⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`,
+                    error?.response?.data || error?.message || error
+                );
+            }
         }
 
         if (!Number.isFinite(this.sourceEnd)) {
