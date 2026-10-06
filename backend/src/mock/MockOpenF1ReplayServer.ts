@@ -36,6 +36,8 @@ const parseDate = (value: any) => {
 };
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const upstreamSpacingMs = () =>
+    CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD ? 1100 : 2100;
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -134,15 +136,20 @@ export class MockOpenF1ReplayServer {
             'User-Agent': 'F1-Dash-Mock-Replay/1.0'
         };
 
-        for (let attempt = 0; attempt < 3; attempt++) {
+        for (let attempt = 0; attempt < 6; attempt++) {
             try {
                 return await axios.get(`${CONFIG.OPENF1_UPSTREAM_BASE}${path}`, {
                     ...config,
                     headers
                 });
             } catch (error: any) {
-                if (error?.response?.status !== 429 || attempt === 2) throw error;
-                await sleep(1000 * (attempt + 1));
+                if (error?.response?.status !== 429 || attempt === 5) throw error;
+                const retryAfterSeconds = Number(error?.response?.headers?.['retry-after']);
+                const waitMs = Number.isFinite(retryAfterSeconds)
+                    ? Math.max(1000, retryAfterSeconds * 1000)
+                    : Math.min(30_000, 2000 * (attempt + 1));
+                console.warn(`⏳ [Mock OpenF1] Rate limited; retrying in ${Math.round(waitMs / 1000)}s...`);
+                await sleep(waitMs);
             }
         }
 
@@ -209,7 +216,7 @@ export class MockOpenF1ReplayServer {
             }
 
             // Avoid hammering the historical API while loading many drivers.
-            await sleep(350);
+            await sleep(upstreamSpacingMs());
         }
 
         rows.sort((a, b) => parseDate(a.date) - parseDate(b.date));
@@ -240,7 +247,7 @@ export class MockOpenF1ReplayServer {
 
             const middle = Math.floor((startMs + endMs) / 2);
             const left = await this.loadHighVolumeWindow(topic, sessionKey, driverNumber, startMs, middle, depth + 1);
-            await sleep(350);
+            await sleep(upstreamSpacingMs());
             const right = await this.loadHighVolumeWindow(topic, sessionKey, driverNumber, middle, endMs, depth + 1);
             return [...left, ...right];
         }
@@ -271,7 +278,7 @@ export class MockOpenF1ReplayServer {
                 this.dataset[topic] = [];
                 console.warn(`⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`, error?.message || error);
             }
-            await sleep(350);
+            await sleep(upstreamSpacingMs());
         }
 
         for (const topic of ['car_data', 'location'] as const) {
