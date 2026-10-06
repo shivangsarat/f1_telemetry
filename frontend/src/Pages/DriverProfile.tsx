@@ -371,6 +371,12 @@ export const DriverProfile = () => {
                                     <span className="text-3xl font-black font-mono text-purple-400 leading-none">{latestTelemetry.rpm}</span>
                                     <span className="text-gray-500 text-xs font-bold uppercase pb-0.5 tracking-widest">rpm</span>
                                 </div>
+                                <div className="flex items-center gap-3 pt-1">
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Est. Long G</span>
+                                    <span className={`font-mono text-xl font-black ${Number(latestTelemetry.longitudinalG || 0) < -0.15 ? 'text-red-400' : Number(latestTelemetry.longitudinalG || 0) > 0.15 ? 'text-green-400' : 'text-gray-300'}`}>
+                                        {Number(latestTelemetry.longitudinalG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.longitudinalG || 0).toFixed(2)} G
+                                    </span>
+                                </div>
                             </div>
                             
                             <div className="flex flex-col gap-4 justify-center">
