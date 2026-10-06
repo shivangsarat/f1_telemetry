@@ -332,7 +332,8 @@ export class LiveSessionEngine {
             championshipDrivers: this.state.championshipDrivers,
             championshipTeams: this.state.championshipTeams,
             sessionResults: this.state.sessionResults,
-            remainingChampionshipPoints: this.championshipContext?.remainingChampionshipPoints
+            remainingChampionshipPoints: this.championshipContext?.remainingChampionshipPoints,
+            sessionFinished: this.state.raceControl.some(message => String(message.flag || '').toUpperCase() === 'CHEQUERED')
         });
 
         return {
