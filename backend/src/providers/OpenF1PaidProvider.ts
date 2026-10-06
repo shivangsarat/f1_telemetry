@@ -20,6 +20,7 @@ export class OpenF1PaidProvider implements ITelemetryProvider {
         'v1/championship_drivers',
         'v1/championship_teams',
         'v1/car_data',
+        'v1/location',
         'v1/laps',
         'v1/stints',
         'v1/pit',
