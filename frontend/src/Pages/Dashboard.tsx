@@ -21,6 +21,9 @@ export const Dashboard = () => {
     const [showScrollTop, setShowScrollTop] = useState(false);
     const [scrollTopDismissed, setScrollTopDismissed] = useState(false);
     const resultsScrollRef = useRef<HTMLDivElement>(null);
+    const raceControlBaselineReadyRef = useRef(false);
+    const lastRaceControlKeyRef = useRef<string | null>(null);
+    const lastRaceControlSessionRef = useRef<any>(null);
 
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
@@ -50,12 +53,43 @@ export const Dashboard = () => {
     const activeRaceControl = isLiveSession ? (liveRace?.raceControl || []) : histRaceControl;
     const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
 
+    const raceControlEventKey = (message: any) =>
+        String(
+            message?._id
+            ?? message?._key
+            ?? `${message?.date || ''}|${message?.category || ''}|${message?.message || message?.text || ''}`
+        );
+
     useEffect(() => {
-        if (isLiveSession && activeRaceControl.length > 0) {
-            const newest = activeRaceControl[0];
-            setLatestToast(prev => (!prev || prev.date !== newest.date ? newest : prev));
+        if (!isLiveSession || !liveRace) return;
+
+        const currentSession = liveRace.sessionInfo?.session_key ?? 'live';
+        if (lastRaceControlSessionRef.current !== currentSession) {
+            lastRaceControlSessionRef.current = currentSession;
+            raceControlBaselineReadyRef.current = false;
+            lastRaceControlKeyRef.current = null;
+            setLatestToast(null);
         }
-    }, [activeRaceControl, isLiveSession]);
+
+        const newest = activeRaceControl[0];
+
+        // First snapshot after joining a live session is baseline state, not a new alert.
+        // If that baseline is empty, the first subsequently-arriving race-control row
+        // is treated as genuinely new and will toast once.
+        if (!raceControlBaselineReadyRef.current) {
+            raceControlBaselineReadyRef.current = true;
+            if (newest) lastRaceControlKeyRef.current = raceControlEventKey(newest);
+            return;
+        }
+
+        if (!newest) return;
+
+        const key = raceControlEventKey(newest);
+        if (key === lastRaceControlKeyRef.current) return;
+
+        lastRaceControlKeyRef.current = key;
+        setLatestToast(newest);
+    }, [activeRaceControl, isLiveSession, liveRace]);
 
     useEffect(() => {
         if (!latestToast) return;
@@ -152,7 +186,11 @@ export const Dashboard = () => {
 
     return (
         <div className="flex min-h-screen bg-black text-white p-4 gap-6 overflow-hidden relative">
-            <RaceControlWidget messages={activeRaceControl} latestToast={latestToast} />
+            <RaceControlWidget
+                messages={activeRaceControl}
+                latestToast={latestToast}
+                onCloseToast={() => setLatestToast(null)}
+            />
 
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
                 <div className="flex justify-between items-center">
@@ -214,6 +252,8 @@ export const Dashboard = () => {
                     <LiveTrackerWidget
                         tracker={liveRace?.tracker}
                         sessionKey={sessionKey}
+                        sticky
+                        defaultMinimized
                     />
                 )}
 
