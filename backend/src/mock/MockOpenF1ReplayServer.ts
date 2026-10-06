@@ -60,27 +60,33 @@ export class MockOpenF1ReplayServer {
     private loopIndex = 0;
     private replayCompleted = false;
     private paused = true;
+    private replayReady = false;
+    private streamClientConnected = false;
 
     private state = new Map<string, any[]>();
     private token: string | null = null;
     private tokenExpiry = 0;
 
     async start() {
-        await this.loadDataset();
+        // Load the lower-volume race state first. This is enough for the backend
+        // REST bootstrap to render the grid/weather/standings immediately.
+        await this.loadCoreDataset();
         this.configureHttp();
 
         await new Promise<void>((resolve, reject) => {
             this.server = http.createServer(this.app);
             this.wss = new WebSocketServer({ server: this.server, path: '/stream' });
             this.wss.on('connection', () => {
-                if (this.paused) {
-                    this.resetReplay();
-                    this.paused = false;
-                    this.broadcast('sessions', this.state.get('sessions') || []);
-                    this.broadcast('drivers', this.state.get('drivers') || []);
-                    this.broadcast('championship_drivers', this.state.get('championship_drivers') || []);
-                    this.broadcast('championship_teams', this.state.get('championship_teams') || []);
-                    console.log('▶️ [Mock OpenF1] Stream client connected; replay started.');
+                this.streamClientConnected = true;
+
+                // Always send the baseline immediately. The replay itself waits for
+                // car_data/location to finish downloading so opening telemetry isn't lost.
+                this.broadcastBaseline();
+
+                if (this.replayReady) {
+                    this.beginReplay();
+                } else {
+                    console.log('⏳ [Mock OpenF1] Stream connected; core state available, preparing telemetry/location replay...');
                 }
             });
             this.server.once('error', reject);
@@ -92,9 +98,42 @@ export class MockOpenF1ReplayServer {
         this.interval = setInterval(() => this.tick(), CONFIG.MOCK_OPENF1_TICK_MS);
 
         console.log(
-            `🎬 [Mock OpenF1] Replaying ${this.sourceSession?.session_name || 'Race'} ` +
-            `session ${this.sourceSession?.session_key} at ${CONFIG.MOCK_OPENF1_SPEED}x on port ${CONFIG.MOCK_OPENF1_PORT}`
+            `🎬 [Mock OpenF1] Core replay server ready for ${this.sourceSession?.session_name || 'Race'} ` +
+            `session ${this.sourceSession?.session_key} on port ${CONFIG.MOCK_OPENF1_PORT}`
         );
+
+        // High-volume telemetry is intentionally background-loaded. It must not
+        // prevent the normal backend from starting or the frontend from receiving
+        // its initial live snapshot.
+        void this.loadHighVolumeDataset()
+            .then(() => {
+                this.events = this.buildEvents().sort((a, b) => a.at - b.at);
+                this.replayReady = true;
+                console.log(`✅ [Mock OpenF1] Full replay ready: ${this.events.length} events.`);
+                if (this.streamClientConnected) this.beginReplay();
+            })
+            .catch((error: any) => {
+                // Core race timing can still replay even if high-volume telemetry
+                // could not be prepared.
+                this.events = this.buildEvents().sort((a, b) => a.at - b.at);
+                this.replayReady = true;
+                console.warn('⚠️ [Mock OpenF1] High-volume preparation failed; starting core-only replay:', error?.message || error);
+                if (this.streamClientConnected) this.beginReplay();
+            });
+    }
+
+    private beginReplay() {
+        if (!this.replayReady || !this.streamClientConnected || !this.paused) return;
+        this.resetReplay();
+        this.paused = false;
+        this.broadcastBaseline();
+        console.log(`▶️ [Mock OpenF1] Replay started at ${CONFIG.MOCK_OPENF1_SPEED}x.`);
+    }
+
+    private broadcastBaseline() {
+        for (const topic of ['sessions', 'drivers', 'championship_drivers', 'championship_teams', 'position', 'stints', 'weather']) {
+            this.broadcast(topic, this.state.get(topic) || []);
+        }
     }
 
     stop() {
@@ -253,7 +292,7 @@ export class MockOpenF1ReplayServer {
         }
     }
 
-    private async loadDataset() {
+    private async loadCoreDataset() {
         this.sourceSession = await this.resolveLastRace();
         const sessionKey = this.sourceSession.session_key;
         this.sourceStart = parseDate(this.sourceSession.date_start);
@@ -281,19 +320,6 @@ export class MockOpenF1ReplayServer {
             await sleep(upstreamSpacingMs());
         }
 
-        for (const topic of ['car_data', 'location'] as const) {
-            try {
-                this.dataset[topic] = await this.loadHighVolumeTopic(topic, sessionKey);
-                console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows (per-driver historical fetch)`);
-            } catch (error: any) {
-                this.dataset[topic] = [];
-                console.warn(
-                    `⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`,
-                    error?.response?.data || error?.message || error
-                );
-            }
-        }
-
         if (!Number.isFinite(this.sourceEnd)) {
             const datedRows = Object.values(this.dataset)
                 .flat()
@@ -319,7 +345,24 @@ export class MockOpenF1ReplayServer {
         }
 
         this.events = this.buildEvents().sort((a, b) => a.at - b.at);
-        console.log(`✅ [Mock OpenF1] Loaded ${this.events.length} replay events.`);
+        console.log(`✅ [Mock OpenF1] Core race state loaded: ${this.events.length} timing/control events.`);
+    }
+
+    private async loadHighVolumeDataset() {
+        const sessionKey = this.sourceSession.session_key;
+
+        for (const topic of ['car_data', 'location'] as const) {
+            try {
+                this.dataset[topic] = await this.loadHighVolumeTopic(topic, sessionKey);
+                console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows (per-driver historical fetch)`);
+            } catch (error: any) {
+                this.dataset[topic] = [];
+                console.warn(
+                    `⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`,
+                    error?.response?.data || error?.message || error
+                );
+            }
+        }
     }
 
     private lapStart(driverNumber: any, lapNumber: any) {
@@ -494,6 +537,34 @@ export class MockOpenF1ReplayServer {
                 this.applyState(topic, this.transformRow(row, topic));
             }
         }
+
+        // Seed only information that would plausibly be available at the opening
+        // of a live session. This makes the first backend bootstrap useful without
+        // leaking completed-race data from the future.
+        const firstByDriver = (rows: any[]) => {
+            const map = new Map<number, any>();
+            for (const row of [...rows].sort((a, b) => parseDate(a.date || a.date_start) - parseDate(b.date || b.date_start))) {
+                const driver = Number(row.driver_number);
+                if (Number.isFinite(driver) && !map.has(driver)) map.set(driver, row);
+            }
+            return [...map.values()];
+        };
+
+        for (const row of firstByDriver(this.dataset.position || [])) {
+            this.applyState('position', this.transformRow(row, 'position'));
+        }
+
+        for (const row of firstByDriver(this.dataset.intervals || [])) {
+            this.applyState('intervals', this.transformRow(row, 'intervals'));
+        }
+
+        for (const row of firstByDriver(this.dataset.stints || [])) {
+            this.applyState('stints', this.transformRow({ ...row, lap_end: null }, 'stints'));
+        }
+
+        const firstWeather = [...(this.dataset.weather || [])]
+            .sort((a, b) => parseDate(a.date) - parseDate(b.date))[0];
+        if (firstWeather) this.applyState('weather', this.transformRow(firstWeather, 'weather'));
     }
 
     private broadcast(topic: string, rows: any[]) {
@@ -532,10 +603,8 @@ export class MockOpenF1ReplayServer {
                 setTimeout(() => {
                     this.loopIndex++;
                     this.resetReplay();
-                    this.broadcast('sessions', this.state.get('sessions') || []);
-                    this.broadcast('drivers', this.state.get('drivers') || []);
-                    this.broadcast('championship_drivers', this.state.get('championship_drivers') || []);
-                    this.broadcast('championship_teams', this.state.get('championship_teams') || []);
+                    this.paused = false;
+                    this.broadcastBaseline();
                     console.log(`🔁 [Mock OpenF1] Starting replay loop ${this.loopIndex + 1}.`);
                 }, CONFIG.MOCK_OPENF1_LOOP_DELAY_MS);
             }
@@ -563,6 +632,8 @@ export class MockOpenF1ReplayServer {
             res.json({
                 enabled: true,
                 paused: this.paused,
+                replay_ready: this.replayReady,
+                stream_client_connected: this.streamClientConnected,
                 source_session_key: this.sourceSession?.session_key,
                 mock_session_key: this.syntheticSessionKey(),
                 source_session_name: this.sourceSession?.session_name,
