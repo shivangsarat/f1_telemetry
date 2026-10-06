@@ -3,6 +3,8 @@ import { CONFIG } from '../config';
 import { ITelemetryProvider } from '../providers/ITelemetryProvider';
 import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
+import { MockOpenF1Provider } from '../providers/MockOpenF1Provider';
+import { startMockOpenF1Server } from '../mock/MockOpenF1ReplayServer';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
 import { getRaceDetails } from '../services/dataService';
 
@@ -14,7 +16,10 @@ export const setupWebSocket = async (server: any) => {
     const clientUnsubscribers = new Map<WebSocket, Map<number, () => void>>();
 
     let provider: ITelemetryProvider;
-    if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID' && CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD) {
+    if (CONFIG.USE_MOCK_OPENF1) {
+        await startMockOpenF1Server();
+        provider = new MockOpenF1Provider(`ws://localhost:${CONFIG.MOCK_OPENF1_PORT}/stream`);
+    } else if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID' && CONFIG.OPENF1_USERNAME && CONFIG.OPENF1_PASSWORD) {
         provider = new OpenF1PaidProvider(
             CONFIG.OPENF1_USERNAME,
             CONFIG.OPENF1_PASSWORD,
@@ -28,7 +33,7 @@ export const setupWebSocket = async (server: any) => {
     // MQTT only delivers messages published after subscription. Hydrate the
     // backend once from REST so a client joining mid-session immediately gets the
     // current race state; all subsequent updates remain WebSocket/MQTT streaming.
-    if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
+    if (CONFIG.USE_MOCK_OPENF1 || CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
         try {
             const initial = await getRaceDetails('latest');
             engine.hydrate(initial, initial.active_session_key ?? initial.sessionInfo?.session_key);
@@ -43,7 +48,7 @@ export const setupWebSocket = async (server: any) => {
         onTelemetry: (driverNumber, point) => {
             // The provider-level callback is retained for the FastF1 adapter.
             // OpenF1 car_data is also ingested into the engine below via onStreamData.
-            if (CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
+            if (!CONFIG.USE_MOCK_OPENF1 && CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
                 const listeners = clientUnsubscribers;
                 for (const [ws, subs] of clientDriverSubs) {
                     if (ws.readyState === WebSocket.OPEN && subs.has(driverNumber)) {
