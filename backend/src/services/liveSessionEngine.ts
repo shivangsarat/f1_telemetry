@@ -52,6 +52,11 @@ export class LiveSessionEngine {
     private readonly listeners = new Set<(snapshot: any) => void>();
     private readonly driverListeners = new Map<number, Set<(payload: any) => void>>();
     private readonly carData = new Map<number, any[]>();
+    private readonly locationHistory = new Map<number, any[]>();
+    private readonly latestLocations = new Map<number, any>();
+    private trackReferenceDriver: number | null = null;
+    private trackTrace: any[] = [];
+    private championshipContext: any = null;
     private readonly maps = new Map<string, Map<string, any>>();
 
     hydrate(calculated: any, sessionKey?: string | number | null) {
@@ -63,6 +68,7 @@ export class LiveSessionEngine {
         this.state.raceControl = calculated.raceControl || this.state.raceControl;
         this.state.championshipDrivers = calculated.championshipDrivers || this.state.championshipDrivers;
         this.state.championshipTeams = calculated.championshipTeams || this.state.championshipTeams;
+        this.championshipContext = calculated.championshipMeta || this.championshipContext;
 
         // The REST bootstrap is already calculated by the same pure layer. Preserve
         // it until the MQTT collections have enough raw state to replace it.
@@ -117,6 +123,11 @@ export class LiveSessionEngine {
                 continue;
             }
 
+            if (topic === 'location') {
+                this.ingestLocation(row);
+                continue;
+            }
+
             if (topic === 'weather') {
                 this.state.weather = row;
                 continue;
@@ -163,6 +174,11 @@ export class LiveSessionEngine {
         };
         this.maps.forEach(map => map.clear());
         this.carData.clear();
+        this.locationHistory.clear();
+        this.latestLocations.clear();
+        this.trackReferenceDriver = null;
+        this.trackTrace = [];
+        this.championshipContext = null;
         this.bootstrapSnapshot = null;
     }
 
@@ -208,7 +224,8 @@ export class LiveSessionEngine {
         if (listeners?.size) {
             // Use recent history rather than only the newest row so derived values
             // such as longitudinal G can be calculated from change over time.
-            const telemetry = buildTelemetryHistory(history.slice(-8), this.state.laps);
+            const locations = this.locationHistory.get(dNum) || [];
+            const telemetry = buildTelemetryHistory(history.slice(-12), this.state.laps, locations.slice(-24));
             const point = telemetry[telemetry.length - 1];
             if (point) {
                 for (const listener of listeners) listener({
@@ -218,6 +235,60 @@ export class LiveSessionEngine {
                 });
             }
         }
+    }
+
+    private ingestLocation(row: any) {
+        const dNum = Number(row.driver_number);
+        if (!Number.isFinite(dNum)) return;
+
+        const history = this.locationHistory.get(dNum) || [];
+        const key = row._key || row._id || row.date;
+        const index = history.findIndex(x => (x._key || x._id || x.date) === key);
+        if (index >= 0) history[index] = row;
+        else history.push(row);
+        history.sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime());
+        if (history.length > 4000) history.splice(0, history.length - 4000);
+        this.locationHistory.set(dNum, history);
+        this.latestLocations.set(dNum, row);
+
+        if (this.trackReferenceDriver === null) this.trackReferenceDriver = dNum;
+        if (dNum === this.trackReferenceDriver) {
+            const point = { x: Number(row.x), y: Number(row.y), z: Number(row.z || 0), date: row.date };
+            const last = this.trackTrace[this.trackTrace.length - 1];
+            if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= 5) {
+                this.trackTrace.push(point);
+                if (this.trackTrace.length > 1600) {
+                    this.trackTrace.splice(0, this.trackTrace.length - 1600);
+                }
+            }
+        }
+    }
+
+    private getTrackerSnapshot(results: any[] = []) {
+        const resultByDriver = new Map(results.map(driver => [Number(driver.driver_number), driver]));
+        const driverInfoByNumber = new Map(this.state.drivers.map(driver => [Number(driver.driver_number), driver]));
+
+        const cars = [...this.latestLocations.entries()].map(([driverNumber, location]) => {
+            const result = resultByDriver.get(driverNumber) || {};
+            const info = driverInfoByNumber.get(driverNumber) || {};
+            return {
+                driver_number: driverNumber,
+                x: Number(location.x),
+                y: Number(location.y),
+                z: Number(location.z || 0),
+                date: location.date,
+                position: result.position ?? null,
+                name: result.name || info.full_name || info.name_acronym || String(driverNumber),
+                acronym: info.name_acronym || null,
+                team_color: result.team_color || info.team_colour || 'ffffff'
+            };
+        });
+
+        return {
+            trace: this.trackTrace,
+            cars,
+            referenceDriver: this.trackReferenceDriver
+        };
     }
 
     private scheduleEmit() {
@@ -241,7 +312,10 @@ export class LiveSessionEngine {
                 type: 'LIVE_RACE_STATE',
                 sessionKey: this.activeSessionKey,
                 timestamp: Date.now(),
-                data: this.bootstrapSnapshot
+                data: {
+                    ...this.bootstrapSnapshot,
+                    tracker: this.getTrackerSnapshot(this.bootstrapSnapshot.results || [])
+                }
             };
         }
 
@@ -257,21 +331,31 @@ export class LiveSessionEngine {
             raceControl: this.state.raceControl,
             championshipDrivers: this.state.championshipDrivers,
             championshipTeams: this.state.championshipTeams,
-            sessionResults: this.state.sessionResults
+            sessionResults: this.state.sessionResults,
+            remainingChampionshipPoints: this.championshipContext?.remainingChampionshipPoints
         });
 
         return {
             type: 'LIVE_RACE_STATE',
             sessionKey: this.activeSessionKey,
             timestamp: Date.now(),
-            data: calculated
+            data: {
+                ...calculated,
+                tracker: this.getTrackerSnapshot(calculated.results || [])
+            }
         };
     }
 
     getDriverSnapshot(driverNumber: number, includeTelemetry = true) {
         const race = this.getSnapshot().data;
         const driver = race.results?.find((d: any) => Number(d.driver_number) === driverNumber) || null;
-        const telemetry = includeTelemetry ? buildTelemetryHistory(this.carData.get(driverNumber) || [], this.state.laps) : undefined;
+        const telemetry = includeTelemetry
+            ? buildTelemetryHistory(
+                this.carData.get(driverNumber) || [],
+                this.state.laps,
+                this.locationHistory.get(driverNumber) || []
+            )
+            : undefined;
 
         return {
             type: 'LIVE_DRIVER_STATE',
