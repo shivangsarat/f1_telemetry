@@ -4,6 +4,12 @@ import { Link } from 'react-router-dom';
 type TrackerState = {
     trace?: any[];
     cars?: any[];
+    circuit?: {
+        name?: string | null;
+        image?: string | null;
+        rotation?: number;
+        corners?: any[];
+    };
 };
 
 const normalizeColor = (value: any) => {
@@ -22,9 +28,11 @@ export const LiveTrackMap = ({
 }) => {
     const trace = tracker?.trace || [];
     const cars = tracker?.cars || [];
+    const circuitCorners = tracker?.circuit?.corners || [];
 
     const geometry = useMemo(() => {
         const allPoints = [
+            ...circuitCorners.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })),
             ...trace.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })),
             ...cars.map((car: any) => ({ x: Number(car.x), y: Number(car.y) }))
         ].filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
@@ -51,16 +59,26 @@ export const LiveTrackMap = ({
             y: height - padding - (y - minY) * scale
         });
 
-        const path = trace
-            .filter((point: any) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
+        const officialPathSource = circuitCorners
+            .filter((point: any) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
+        const livePathSource = trace
+            .filter((point: any) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
+
+        const makePath = (points: any[]) => points
             .map((point: any, index: number) => {
                 const p = project(Number(point.x), Number(point.y));
                 return `${index === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
             })
             .join(' ');
 
-        return { width, height, project, path };
-    }, [trace, cars, compact]);
+        return {
+            width,
+            height,
+            project,
+            officialPath: makePath(officialPathSource),
+            livePath: makePath(livePathSource)
+        };
+    }, [trace, cars, circuitCorners, compact]);
 
     if (!geometry) {
         return (
@@ -74,6 +92,16 @@ export const LiveTrackMap = ({
 
     return (
         <div className="w-full">
+            {tracker?.circuit?.name && (
+                <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                        {tracker.circuit.name}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wider text-gray-600">
+                        Circuit geometry + live location
+                    </span>
+                </div>
+            )}
             <svg
                 viewBox={`0 0 ${geometry.width} ${geometry.height}`}
                 className={`w-full ${compact ? 'max-h-[280px]' : 'max-h-[650px]'}`}
@@ -81,12 +109,35 @@ export const LiveTrackMap = ({
                 aria-label="Live driver positions around the circuit"
             >
                 <rect x="0" y="0" width={geometry.width} height={geometry.height} rx="22" fill="#0b1220" />
-                {geometry.path && (
+                {geometry.officialPath && (
                     <>
-                        <path d={geometry.path} fill="none" stroke="#1f2937" strokeWidth={compact ? 16 : 22} strokeLinecap="round" strokeLinejoin="round" />
-                        <path d={geometry.path} fill="none" stroke="#64748b" strokeWidth={compact ? 3 : 4} strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+                        <path d={geometry.officialPath} fill="none" stroke="#111827" strokeWidth={compact ? 18 : 24} strokeLinecap="round" strokeLinejoin="round" />
+                        <path d={geometry.officialPath} fill="none" stroke="#475569" strokeWidth={compact ? 4 : 5} strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
                     </>
                 )}
+                {geometry.livePath && (
+                    <path
+                        d={geometry.livePath}
+                        fill="none"
+                        stroke="#94a3b8"
+                        strokeWidth={compact ? 2 : 3}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity={geometry.officialPath ? 0.45 : 0.9}
+                    />
+                )}
+
+                {!compact && circuitCorners.map((corner: any, index: number) => {
+                    const point = geometry.project(Number(corner.x), Number(corner.y));
+                    return (
+                        <g key={`corner-${corner.number ?? index}-${corner.letter || ''}`}>
+                            <circle cx={point.x} cy={point.y} r="3" fill="#64748b" />
+                            <text x={point.x + 6} y={point.y - 5} fontSize="10" fill="#64748b" fontWeight="700">
+                                T{corner.number ?? index + 1}{corner.letter || ''}
+                            </text>
+                        </g>
+                    );
+                })}
 
                 {sortedCars.map((car: any) => {
                     const point = geometry.project(Number(car.x), Number(car.y));
