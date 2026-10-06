@@ -58,6 +58,7 @@ export class LiveSessionEngine {
     private trackReferenceDriver: number | null = null;
     private trackTrace: any[] = [];
     private championshipContext: any = null;
+    private trackMeta: any = null;
     private readonly maps = new Map<string, Map<string, any>>();
 
     hydrate(calculated: any, sessionKey?: string | number | null) {
@@ -70,6 +71,10 @@ export class LiveSessionEngine {
         this.state.championshipDrivers = calculated.championshipDrivers || this.state.championshipDrivers;
         this.state.championshipTeams = calculated.championshipTeams || this.state.championshipTeams;
         this.championshipContext = calculated.championshipMeta || this.championshipContext;
+        this.trackMeta = {
+            meetingInfo: calculated.meetingInfo || null,
+            circuitInfo: calculated.circuitInfo || null
+        };
 
         // The REST bootstrap is already calculated by the same pure layer. Preserve
         // it until the MQTT collections have enough raw state to replace it.
@@ -181,6 +186,7 @@ export class LiveSessionEngine {
         this.trackReferenceDriver = null;
         this.trackTrace = [];
         this.championshipContext = null;
+        this.trackMeta = null;
         this.bootstrapSnapshot = null;
     }
 
@@ -286,10 +292,26 @@ export class LiveSessionEngine {
             };
         });
 
+        const rawCorners = this.trackMeta?.circuitInfo?.corners || [];
+        const corners = rawCorners
+            .map((corner: any) => ({
+                number: corner.number ?? corner.Number ?? null,
+                letter: corner.letter ?? corner.Letter ?? '',
+                x: Number(corner.trackPosition?.x ?? corner.x ?? corner.X),
+                y: Number(corner.trackPosition?.y ?? corner.y ?? corner.Y)
+            }))
+            .filter((corner: any) => Number.isFinite(corner.x) && Number.isFinite(corner.y));
+
         return {
             trace: this.trackTrace,
             cars,
-            referenceDriver: this.trackReferenceDriver
+            referenceDriver: this.trackReferenceDriver,
+            circuit: {
+                name: this.trackMeta?.meetingInfo?.circuit_short_name || this.state.sessionInfo?.circuit_short_name || null,
+                image: this.trackMeta?.meetingInfo?.circuit_image || null,
+                rotation: Number(this.trackMeta?.circuitInfo?.rotation || 0),
+                corners
+            }
         };
     }
 
@@ -333,6 +355,8 @@ export class LiveSessionEngine {
 
         const calculated = calculateRaceView({
             sessionInfo: this.state.sessionInfo,
+            meetingInfo: this.trackMeta?.meetingInfo,
+            circuitInfo: this.trackMeta?.circuitInfo,
             drivers: this.state.drivers,
             intervals: this.state.intervals,
             positions: this.state.positions,
