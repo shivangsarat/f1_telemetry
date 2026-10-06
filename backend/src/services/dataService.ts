@@ -332,6 +332,26 @@ export const getRaceDetails = async (sessionKey: string) => {
     const isRace = String(sessionInfo.session_type || sessionInfo.session_name || '').toLowerCase().includes('race')
         || String(sessionInfo.session_type || '').toLowerCase().includes('sprint');
 
+    let meetingInfo: any = null;
+    let circuitInfo: any = null;
+    if (sessionInfo.meeting_key) {
+        const meetingInfoRes = await getCached(
+            `meeting_info_${sessionInfo.meeting_key}`,
+            600000,
+            () => openF1Request(`${OPENF1_BASE}/meetings?meeting_key=${sessionInfo.meeting_key}`)
+        );
+        meetingInfo = meetingInfoRes.data?.[0] || null;
+
+        if (meetingInfo?.circuit_info_url) {
+            const circuitInfoRes = await getCached(
+                `circuit_info_${meetingInfo.circuit_key}_${meetingInfo.year || sessionInfo.year || ''}`,
+                86400000,
+                () => axios.get(meetingInfo.circuit_info_url, { headers: { 'User-Agent': 'FastF1/' } })
+            );
+            circuitInfo = circuitInfoRes?.data || null;
+        }
+    }
+
     const sessionYear = Number(sessionInfo.year)
         || (sessionInfo.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : new Date().getUTCFullYear());
     const seasonSessionsRes = await getCached(
@@ -390,6 +410,8 @@ export const getRaceDetails = async (sessionKey: string) => {
         active_session_key: activeSessionKey !== sessionKey ? activeSessionKey : undefined,
         ...calculateRaceView({
             sessionInfo,
+            meetingInfo,
+            circuitInfo,
             availableSessions,
             drivers: driversRes.data || [],
             intervals: intervalsRes.data || [],
