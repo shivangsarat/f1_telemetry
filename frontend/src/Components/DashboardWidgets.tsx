@@ -1,5 +1,5 @@
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
-import { getFlagTheme, getTyreColor, getF1Points } from '../Utils/helpers';
+import { getFlagTheme, getTyreColor } from '../Utils/helpers';
 import { SectorBlock } from './TelemetryWidgets';
 import { useRaceStore } from '../store/useRaceStore';
 import uPlot from 'uplot';
@@ -119,27 +119,16 @@ const calculatePartialLapProgress = (driver: any) => {
 // --- COMPONENT: Championship Points Widget (Replaces Live Battles) ---
 export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: any, liveStandings?: any }) => {
     const pointsBefore = driver.championship?.pointsStart ?? 0;
-    const posStart = driver.championship?.position !== '-' ? driver.championship?.position : '-';
+    // Backend uses posStart; keep position as a legacy fallback for older payloads.
+    const rawPosStart = driver.championship?.posStart ?? driver.championship?.position;
+    const posStart = rawPosStart !== undefined && rawPosStart !== null && rawPosStart !== 99 ? rawPosStart : '-';
 
-    let pointsAddition = 0;
-    let pointsAfter = 0;
-    let projectedPos = '-';
-    let posChange = 0;
-    let isFinished = false;
-
-    if (liveStandings && liveStandings[driver.driver_number]) {
-        const stats = liveStandings[driver.driver_number];
-        pointsAddition = stats.pointsAddition;
-        pointsAfter = stats.pointsAfter;
-        projectedPos = stats.projectedPos;
-        posChange = stats.posChange;
-        isFinished = stats.isFinished;
-    } else {
-        const currentPos = driver.position || driver.official_position || 99;
-        isFinished = driver.status === 'Finished' || driver.status === 'Classified';
-        pointsAddition = getF1Points(currentPos, false);
-        pointsAfter = isFinished ? (driver.championship?.points ?? (pointsBefore + pointsAddition)) : pointsBefore + pointsAddition;
-    }
+    const stats = driver.championship || {};
+    const pointsAddition = stats.pointsAddition ?? 0;
+    const pointsAfter = stats.pointsAfter ?? stats.points ?? pointsBefore;
+    const projectedPos = stats.projectedPos ?? stats.positionEnd ?? '-';
+    const posChange = stats.posChange ?? 0;
+    const isFinished = Boolean(stats.isFinished || driver.status === 'Finished' || driver.status === 'Classified');
 
     return (
         <div className="flex flex-col gap-1.5 h-full">
@@ -153,7 +142,7 @@ export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: an
             </div>
             <div className="bg-gray-800/40 p-2 rounded-md border border-gray-700/60 shadow-inner flex flex-col gap-1 text-xs flex-1 justify-center">
                 <div className="flex justify-between items-center">
-                    <span className="text-gray-500 uppercase tracking-widest text-[9px] font-bold">Start: P{posStart}</span>
+                    <span className="text-gray-300 uppercase tracking-widest text-[10px] font-bold">Start: <span className="text-white">P{posStart}</span></span>
                     <span className="font-bold text-gray-300 font-mono">{pointsBefore} PTS</span>
                 </div>
                 <div className="flex justify-between items-center border-t border-gray-700/50 pt-1 mt-0.5">
@@ -246,17 +235,17 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode, liveS
     const { pit_stops } = driver;
 
     // --- TIMELINE SCALE LOGIC ---
-    const allDrivers = useRaceStore(state => state.intervals) || [];
-    const maxRaceLapStore = useRaceStore(state => state.maxRaceLap);
+    const liveRace = useRaceStore(state => state.liveRace);
+    const maxRaceLapStore = liveRace?.maxRaceLap || 0;
     
     // Check driver status to control the progress bar behavior
     const isDNF = driver.status === 'DNF' || driver.status?.toUpperCase().includes('OUT') || driver.status === 'Retired';
     const isFinished = driver.status === 'Finished' || (!isLive && !isDNF);
 
-    const currentLeaderLap = allDrivers.length > 0 ? Math.max(...allDrivers.map(d => d.completed_laps || 0)) : 1;
-    const globalMaxLap = (maxRaceLapStore && maxRaceLapStore > 0) ? maxRaceLapStore : currentLeaderLap;
+    const currentLeaderLap = Math.max(1, ...(liveRace?.results || []).map((d: any) => d.completed_laps || 0));
+    const globalMaxLap = maxRaceLapStore > 0 ? maxRaceLapStore : currentLeaderLap;
     
-    const partialLap = (isLive && !isFinished && !isDNF) ? calculatePartialLapProgress(driver) : 0;
+    const partialLap = (isLive && !isFinished && !isDNF) ? Number(driver.partial_lap_progress || 0) : 0;
     const currentDistance = (driver.completed_laps || 0) + partialLap;
 
     let scaleMax = globalMaxLap;
@@ -367,34 +356,80 @@ export const DriverExpandedRow = React.memo(({ driver, isLive, isRaceMode, liveS
     );
 });
 
-export const TyreHistoryWidget = ({ driver }: { driver: any }) => (
-    <div className="flex items-center gap-4 pt-6 pb-8">
-        <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
-        <div className="flex-1 flex items-center relative h-2.5 bg-gray-800 rounded-full">
-            {driver && driver.tyreHistory && driver.tyreHistory.stints.map((stint: any, i: number) => {
-                const widthPct = (stint.length / Math.max(driver.total_laps, 1)) * 100;
-                const isFirst = i === 0;
-                const isLast = i === driver.stints.length - 1;
-                const tyreColor = getTyreColor(stint.compound);
-                
-                return (
-                    <div key={i} className="h-full relative flex items-center justify-center transition-all duration-500"
-                        style={{ width: `${widthPct}%`, backgroundColor: tyreColor, borderTopLeftRadius: isFirst ? '9999px' : '0', borderBottomLeftRadius: isFirst ? '9999px' : '0', borderTopRightRadius: isLast ? '9999px' : '0', borderBottomRightRadius: isLast ? '9999px' : '0' }}>
-                        {stint.length > 2 && <span className="absolute -top-6 text-[11px] font-bold font-mono tracking-tight drop-shadow-sm" style={{ color: tyreColor }}>{stint.length}L</span>}
-                        {i > 0 && (
-                            <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
-                                <div className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80" style={{ backgroundColor: tyreColor }} />
-                                <span className="absolute top-4 text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">
-                                    {`L${stint.start > 1 ? stint.start - 1 : stint.stat}`}
-                                </span>
+export const TyreHistoryWidget = ({ driver }: { driver: any }) => {
+    const stints = Array.isArray(driver?.tyreHistory?.stints) ? driver.tyreHistory.stints : [];
+    if (stints.length === 0) {
+        return (
+            <div className="flex items-center gap-4 pt-6 pb-8">
+                <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
+                <div className="flex-1 h-2.5 bg-gray-800 rounded-full" />
+            </div>
+        );
+    }
+
+    // Use the actual stint coverage as the denominator. This is more robust for
+    // live sessions where total_laps can lag behind the latest stint/lap data.
+    const maxEnd = Math.max(
+        ...stints.map((stint: any) => Number(stint.end ?? 0)),
+        Number(driver?.total_laps ?? 0),
+        1
+    );
+
+    return (
+        <div className="flex items-center gap-4 pt-6 pb-8">
+            <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider">Tyres:</span>
+            <div className="flex-1 relative pt-7">
+                <div className="relative flex w-full h-2.5 bg-gray-800 rounded-full overflow-visible">
+                    {stints.map((stint: any, i: number) => {
+                        const start = Number(stint.start ?? 1);
+                        const end = Number(stint.end ?? start);
+                        const length = Math.max(0, Number(stint.length ?? (end - start + 1)));
+                        const widthPct = (length / maxEnd) * 100;
+                        const isFirst = i === 0;
+                        const isLast = i === stints.length - 1;
+                        const tyreColor = getTyreColor(stint.compound);
+
+                        return (
+                            <div
+                                key={`${start}-${end}-${i}`}
+                                className="relative h-full flex-none"
+                                style={{
+                                    flexBasis: `${widthPct}%`,
+                                    backgroundColor: tyreColor,
+                                    borderTopLeftRadius: isFirst ? '9999px' : '0',
+                                    borderBottomLeftRadius: isFirst ? '9999px' : '0',
+                                    borderTopRightRadius: isLast ? '9999px' : '0',
+                                    borderBottomRightRadius: isLast ? '9999px' : '0'
+                                }}
+                            >
+                                {length > 2 && (
+                                    <span
+                                        className="absolute left-1/2 -translate-x-1/2 -top-7 whitespace-nowrap text-[11px] font-bold font-mono tracking-tight drop-shadow-sm"
+                                        style={{ color: tyreColor }}
+                                    >
+                                        {length}L
+                                    </span>
+                                )}
+
+                                {stint.has_pit_before && (
+                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 flex flex-col items-center">
+                                        <div
+                                            className="w-4 h-4 rounded-full border-2 border-gray-900 shadow-lg shadow-black/80"
+                                            style={{ backgroundColor: tyreColor }}
+                                        />
+                                        <span className="absolute top-4 whitespace-nowrap text-[10px] font-bold font-mono text-gray-200 bg-gray-900 px-1.5 py-0.5 rounded border border-gray-700 shadow-md">
+                                            L{start}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
-                );
-            })}
+                        );
+                    })}
+                </div>
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
 export const PitHistoryWidget = ({ driver }: { driver: any }) => {
     if (!((driver && driver.tyreHistory && driver.tyreHistory.pit_stops && driver.tyreHistory.pit_stops.length > 0) || (driver.tyreHistory.stints && driver.tyreHistory.stints.length > 1))) return null;
@@ -598,6 +633,87 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
 
             {/* uPlot Chart */}
             <div ref={chartRef} className="w-full flex-1 min-h-0" style={{ minHeight: '300px' }}></div>
+        </div>
+    );
+};
+
+export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeResults: any[]; maxRaceLap: number }) => {
+    const chartRef = useRef<HTMLDivElement>(null);
+    const plotRef = useRef<uPlot | null>(null);
+    const [hiddenDrivers, setHiddenDrivers] = useState<Set<number>>(new Set());
+
+    useLayoutEffect(() => {
+        if (!chartRef.current || !activeResults?.length) return;
+
+        const maxLap = Math.max(
+            Number(maxRaceLap || 0),
+            ...activeResults.map(driver => Math.max(0, ...(driver.lapsHistory || []).map((lap: any) => Number(lap.lap_number || 0))))
+        );
+        if (!maxLap) return;
+
+        const x = Array.from({ length: maxLap }, (_, index) => index + 1);
+        const visibleResults = activeResults.filter(driver => !hiddenDrivers.has(Number(driver.driver_number)));
+        const data: uPlot.AlignedData = [x];
+        const series: uPlot.Series[] = [{ label: 'Lap' }];
+
+        visibleResults.forEach(driver => {
+            const byLap = new Map((driver.lapsHistory || []).map((lap: any) => [Number(lap.lap_number), Number(lap.lap_duration)]));
+            data.push(x.map(lap => byLap.get(lap) ?? null));
+            series.push({
+                label: driver.name || String(driver.driver_number),
+                stroke: `#${driver.team_color || 'ffffff'}`,
+                width: 2,
+                points: { show: false },
+                spanGaps: false,
+                value: (_u, value) => value == null ? '--' : `${Number(value).toFixed(3)}s`
+            });
+        });
+
+        plotRef.current?.destroy();
+        plotRef.current = new uPlot({
+            width: chartRef.current.clientWidth || 1000,
+            height: 420,
+            legend: { show: false },
+            cursor: { x: true, y: true },
+            axes: [
+                { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP' },
+                { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP TIME (s)' }
+            ],
+            series,
+            scales: { x: { time: false }, y: { auto: true } }
+        }, data, chartRef.current);
+
+        return () => {
+            plotRef.current?.destroy();
+            plotRef.current = null;
+        };
+    }, [activeResults, maxRaceLap, hiddenDrivers]);
+
+    return (
+        <div className="w-full bg-gray-900 p-5 rounded-xl border border-gray-800">
+            <div className="flex items-center justify-between mb-3 border-b border-gray-700/60 pb-2">
+                <span className="text-gray-300 font-bold uppercase tracking-widest text-sm">LAP TIMES — ALL DRIVERS</span>
+                <div className="flex flex-wrap justify-end gap-1.5 max-w-[75%]">
+                    {activeResults.map(driver => {
+                        const driverNumber = Number(driver.driver_number);
+                        const hidden = hiddenDrivers.has(driverNumber);
+                        return (
+                            <button
+                                key={driverNumber}
+                                onClick={() => setHiddenDrivers(previous => {
+                                    const next = new Set(previous);
+                                    hidden ? next.delete(driverNumber) : next.add(driverNumber);
+                                    return next;
+                                })}
+                                className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider border transition ${hidden ? 'text-gray-600 border-gray-800' : 'text-gray-200 border-gray-700 hover:border-gray-500'}`}
+                            >
+                                {driver.name || driverNumber}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+            <div ref={chartRef} className="w-full" />
         </div>
     );
 };

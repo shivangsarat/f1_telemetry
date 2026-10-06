@@ -5,10 +5,13 @@ export interface DriverTelemetryPoint {
     gear: number;
     throttle: number;
     brake: number;
+    drs?: number;
+    date?: string;
 }
 
 export interface TelemetryCallbacks {
     onTelemetry: (driverNumber: number, point: DriverTelemetryPoint) => void;
+    onStreamData?: (topic: string, data: any) => void;
     onRaceControl?: (message: any) => void;
     onInterval?: (message: any) => void;
     onPosition?: (message: any) => void;

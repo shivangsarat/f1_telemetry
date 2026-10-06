@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, useLayoutEffect, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useLayoutEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
-import { computeLiveChampionship } from '../Utils/helpers';
-import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart } from '../Components/DashboardWidgets';
+import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart, AllDriversLapTimesChart } from '../Components/DashboardWidgets';
 import { SectorBlock } from '../Components/TelemetryWidgets';
+import { LiveTrackerWidget } from '../Components/LiveTrackMap';
+import { DriverBadges } from '../Components/DriverBadges';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
@@ -79,7 +80,8 @@ export const DriverProfile = () => {
     
     const isLive = sessionKey === 'live' || sessionKey === 'latest';
     
-    const { connect, intervals: liveResults, isRace: liveIsRace } = useRaceStore(state => state);
+    const connect = useRaceStore(state => state.connect);
+    const liveRace = useRaceStore(state => state.liveRace);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
     
     const liveData = useDriverTelemetry(driverNumber, isLive); 
@@ -168,20 +170,22 @@ export const DriverProfile = () => {
     }, [updateLegendState]);
 
     useEffect(() => {
+        if (isLive) {
+            setLoading(false);
+            return;
+        }
+
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
-        
-        const effectiveKey = sessionKey === 'live' ? 'latest' : sessionKey;
-        
         setLoading(true);
+
         Promise.all([
-            !isLive ? fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()) : Promise.resolve({ telemetry: [], laps: [], stints: [] }),
-            fetch(`${API_BASE}/api/race-details/${effectiveKey}`).then(r => r.json())
+            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()),
+            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
         ]).then(([cleanData, rd]) => {
-            if (!isLive) setHistPayload(cleanData);
+            setHistPayload(cleanData);
             setRaceDetails(rd);
             setLoading(false);
         }).catch(() => setLoading(false));
-        
     }, [sessionKey, driverNumber, isLive]);
 
     const snapToPlayhead = useCallback(() => {
@@ -237,29 +241,8 @@ export const DriverProfile = () => {
     const hasEnoughDataToScroll = maxLapX > VIEWPORT_LAPS;
 
     
-    const activeResults = useMemo(() => {
-        if (!isLive || !liveResults || liveResults.length === 0 || !raceDetails?.results) {
-            return raceDetails?.results || [];
-        }
-        return (raceDetails.results || []).map((histDriver: any) => {
-            const liveDriver = liveResults.find((d: any) => String(d.driver_number) === String(histDriver.driver_number));
-            if (liveDriver) {
-                return { ...histDriver, ...liveDriver };
-            }
-            return histDriver;
-        }).sort((a: any, b: any) => {
-            const posA = Number(a.position || a.official_position || 99);
-            const posB = Number(b.position || b.official_position || 99);
-            return posA - posB;
-        });
-    }, [isLive, liveResults, raceDetails]);
-
-    const isRaceMode = (isLive && liveResults && liveResults.length > 0) ? liveIsRace : raceDetails?.isRace;
-
-    const liveStandings = useMemo(() => {
-        if (!activeResults || activeResults.length === 0) return null;
-        return computeLiveChampionship(activeResults, false);
-    }, [activeResults]);
+    const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
+    const isRaceMode = isLive ? Boolean(liveRace?.isRace) : Boolean(raceDetails?.isRace);
 
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
@@ -273,6 +256,26 @@ export const DriverProfile = () => {
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
     const bestLapObj = completedLaps.length > 0 ? completedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, completedLaps[0]) : null;
+    const sessionBests = isLive ? liveRace?.sessionBests : raceDetails?.sessionBests;
+    const isSessionBestLap = (value: any) => {
+        const lap = Number(value);
+        const best = Number(sessionBests?.lap?.raw);
+        return Number.isFinite(lap) && Number.isFinite(best) && Math.abs(lap - best) < 0.0005;
+    };
+    const personalBestSectors = completedLaps.reduce((best: any, lap: any) => ({
+        s1: Math.min(best.s1, Number(lap.duration_sector_1) || Infinity),
+        s2: Math.min(best.s2, Number(lap.duration_sector_2) || Infinity),
+        s3: Math.min(best.s3, Number(lap.duration_sector_3) || Infinity),
+    }), { s1: Infinity, s2: Infinity, s3: Infinity });
+    const isPersonalBestSector = (value: any, key: 's1' | 's2' | 's3') => {
+        const n = Number(value);
+        return Number.isFinite(n) && Math.abs(n - personalBestSectors[key]) < 0.0005;
+    };
+    const isSessionBestSector = (value: any, key: 's1' | 's2' | 's3') => {
+        const n = Number(value);
+        const best = Number(sessionBests?.[key]?.raw);
+        return Number.isFinite(n) && Number.isFinite(best) && Math.abs(n - best) < 0.0005;
+    };
 
     const isLiveTracking = isAutoScroll && isLive;
 
@@ -281,7 +284,12 @@ export const DriverProfile = () => {
 
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-6">
-                    <h1 className="text-3xl font-bold">Driver {driverNumber} Telemetry</h1>
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <h1 className="text-3xl font-bold">
+                            {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
+                        </h1>
+                        {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+                    </div>
                     {!isAutoScroll && (
                         <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
                             Resume Auto-Scroll →
@@ -308,26 +316,26 @@ export const DriverProfile = () => {
                                 <div className="flex flex-col gap-1">
                                     <div>
                                         <span className="font-bold text-gray-400 block mb-1">Best Lap:</span> 
-                                        <span className="font-mono text-white text-lg font-bold">{currentDriverInfo.best_lap}</span>
+                                        <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentDriverInfo.best_lap_raw) ? 'text-purple-400' : 'text-white'}`}>{currentDriverInfo.best_lap}</span>
                                     </div>
-                                    {(!isRaceMode && currentDriverInfo.best_sectors) && <SectorBlock sectors={currentDriverInfo.best_sectors} />}
+                                    {(!isRaceMode && currentDriverInfo.best_sectors) && <SectorBlock sectors={currentDriverInfo.best_sectors} sessionBests={sessionBests} />}
                                 </div>
                                 {(isRaceMode || (isLive && !isRaceMode)) && (
                                     <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
                                         <div>
                                             <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
-                                            <span className="font-mono text-white text-lg font-bold">
+                                            <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentLiveLapObj?.lap_duration) ? 'text-purple-400' : 'text-white'}`}>
                                                 {(currentDriverInfo.last_lap === '-' && (isLive && !isRaceMode)) ? 'In Progress' : currentDriverInfo.last_lap}
                                             </span>
                                         </div>
-                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} />}
+                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} sessionBests={sessionBests} />}
                                     </div>
                                 )}
                             </div>
                         </div>
 
                         <div className="lg:col-span-3 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
-                            <DriverChampionshipWidget driver={currentDriverInfo} liveStandings={liveStandings} />
+                            <DriverChampionshipWidget driver={currentDriverInfo} liveStandings={undefined} />
                         </div>
 
                         <div className="lg:col-span-4 bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg">
@@ -370,6 +378,26 @@ export const DriverProfile = () => {
                                     <span className="text-3xl font-black font-mono text-purple-400 leading-none">{latestTelemetry.rpm}</span>
                                     <span className="text-gray-500 text-xs font-bold uppercase pb-0.5 tracking-widest">rpm</span>
                                 </div>
+                                <div className="grid grid-cols-3 gap-2 pt-1">
+                                    <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                                        <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Long G</span>
+                                        <span className={`font-mono text-sm font-black ${Number(latestTelemetry.longitudinalG || 0) < -0.15 ? 'text-red-400' : Number(latestTelemetry.longitudinalG || 0) > 0.15 ? 'text-green-400' : 'text-gray-300'}`}>
+                                            {Number(latestTelemetry.longitudinalG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.longitudinalG || 0).toFixed(2)} G
+                                        </span>
+                                    </div>
+                                    <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                                        <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Lat G</span>
+                                        <span className="font-mono text-sm font-black text-blue-300">
+                                            {Number(latestTelemetry.lateralG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.lateralG || 0).toFixed(2)} G
+                                        </span>
+                                    </div>
+                                    <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                                        <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Total G</span>
+                                        <span className="font-mono text-sm font-black text-white">
+                                            {Number(latestTelemetry.totalG || 0).toFixed(2)} G
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
                             
                             <div className="flex flex-col gap-4 justify-center">
@@ -404,6 +432,14 @@ export const DriverProfile = () => {
                             </div>
                         </div>
                     </div>
+                )}
+
+                {isLive && (
+                    <LiveTrackerWidget
+                        tracker={liveRace?.tracker}
+                        sessionKey={sessionKey}
+                        selectedDriver={driverNumber}
+                    />
                 )}
                 
                 {currentDriverInfo && (
@@ -468,7 +504,7 @@ export const DriverProfile = () => {
                             <AllDriversPaceChart 
                                 activeResults={activeResults} 
                                 currentDriverNumber={driverNumber} 
-                                maxRaceLap={raceDetails?.maxRaceLap || activeData.laps?.length || 1} 
+                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)} 
                             />
                         </div>
 
@@ -504,7 +540,7 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <span className="font-bold w-12 text-gray-300">L{lap.lap_number}</span>
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getTyreColor(tyreCompound) }} title={tyreCompound}></div>
-                                                    <span className="text-white font-bold">{formatLapTime(lapDuration)}</span>
+                                                    <span className={`font-bold ${isSessionBestLap(lapDuration) ? 'text-purple-400' : (delta === 0 ? 'text-green-400' : 'text-white')}`}>{formatLapTime(lapDuration)}</span>
                                                     <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
                                                         {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
                                                     </span>
@@ -513,9 +549,13 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <div className="flex flex-col gap-1 w-32">
                                                         <div className="flex justify-between text-[10px] text-gray-500">
-                                                            <span className="text-gray-200">S1: {lap.duration_sector_1 ? lap.duration_sector_1.toFixed(2) : '-'}</span>
-                                                            <span className="text-gray-200">S2: {lap.duration_sector_2 ? lap.duration_sector_2.toFixed(2) : '-'}</span>
-                                                            <span className="text-gray-200">S3: {lap.duration_sector_3 ? lap.duration_sector_3.toFixed(2) : '-'}</span>
+                                                            {(['s1', 's2', 's3'] as const).map((key, idx) => {
+                                                                const value = lap[`duration_sector_${idx + 1}`];
+                                                                const cls = isSessionBestSector(value, key) ? 'text-purple-400 font-bold'
+                                                                    : isPersonalBestSector(value, key) ? 'text-green-400 font-bold'
+                                                                    : 'text-gray-200';
+                                                                return <span key={key} className={cls}>{key.toUpperCase()}: {value ? Number(value).toFixed(2) : '-'}</span>;
+                                                            })}
                                                         </div>
                                                         {renderMinisectors(lap.segments_sector_1 || lap.seg1)}
                                                     </div>
@@ -530,6 +570,11 @@ export const DriverProfile = () => {
                         </div>
 
                     </div>
+
+                    <AllDriversLapTimesChart
+                        activeResults={activeResults}
+                        maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                    />
                 </div>
             </div>
         </div>

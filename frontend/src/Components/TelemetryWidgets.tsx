@@ -12,7 +12,7 @@ export const MiniSectors = React.memo(({ segments }: { segments: number[] }) => 
     );
 });
 
-export const SectorBlock = React.memo(({ sectors }: { sectors: any }) => {
+export const SectorBlock = React.memo(({ sectors, sessionBests }: { sectors: any; sessionBests?: any }) => {
     if (!sectors) return null;
     return (
         <div className="flex gap-6 font-mono text-gray-300 text-xs mt-1">
@@ -20,11 +20,15 @@ export const SectorBlock = React.memo(({ sectors }: { sectors: any }) => {
                 const speedKeys = ['i1_speed', 'i2_speed', 'st_speed'];
                 const speedVal = sectors[speedKeys[idx]];
                 const isTrap = sectorKey === 's3';
+                const sectorValue = Number(sectors[sectorKey]);
+                const sessionBestValue = Number(sessionBests?.[sectorKey]?.raw);
+                const isSessionBest = Number.isFinite(sectorValue) && Number.isFinite(sessionBestValue)
+                    && Math.abs(sectorValue - sessionBestValue) < 0.0005;
 
                 return (
                     <div key={sectorKey} className="w-20 flex flex-col justify-end">
                         <span className="block text-gray-400 mb-0.5">{sectorKey.toUpperCase()}:</span>
-                        <strong className="text-white text-sm block mb-1">
+                        <strong className={`${isSessionBest ? 'text-purple-400' : 'text-white'} text-sm block mb-1`}>
                             {sectors[sectorKey] ? `${sectors[sectorKey].toFixed(3)}s` : '-'}
                         </strong>
                         <div className="h-8 flex flex-col justify-start">
