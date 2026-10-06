@@ -20,14 +20,15 @@ app.get(/.*/, (_req, res) => {
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8080;
 
-const start = async () => {
-    try {
-        await setupWebSocket(server);
-        server.listen(PORT, () => console.log(`🏎️  F1 Production Server running on port ${PORT}`));
-    } catch (error) {
-        console.error('❌ Failed to start F1 backend:', error);
-        process.exitCode = 1;
-    }
-};
+// Attach the WebSocket server synchronously, but do not block the HTTP listener
+// on OpenF1 authentication, mock dataset preparation, or provider connection.
+// The frontend can connect/retry immediately while live state initializes.
+const liveSetup = setupWebSocket(server).catch(error => {
+    console.error('❌ Failed to initialize F1 live provider:', error);
+});
 
-void start();
+server.listen(PORT, () => {
+    console.log(`🏎️  F1 Production Server running on port ${PORT}`);
+});
+
+void liveSetup;
