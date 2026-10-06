@@ -255,9 +255,18 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = []) => 
 
     const completed = orderedLaps.filter(l => num(l.lap_duration) > 0 && l.date_start);
     const lastCompletedDuration = completed.length ? num(completed[completed.length - 1].lap_duration, 90) : 90;
-    const points = [...carData]
+
+    const orderedCarData = [...carData]
         .filter(t => t.date)
-        .sort((a, b) => parseDate(a.date) - parseDate(b.date))
+        .sort((a, b) => parseDate(a.date) - parseDate(b.date));
+
+    // Approximate longitudinal acceleration from speed delta over time.
+    // OpenF1 speed is km/h, so convert to m/s before differentiating.
+    // A small EMA reduces telemetry jitter while keeping braking/acceleration responsive.
+    let previousTelemetry: any = null;
+    let smoothedLongitudinalG = 0;
+
+    const points = orderedCarData
         .map(t => {
             const time = parseDate(t.date);
             let lap = completed.find(l => {
@@ -278,14 +287,36 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = []) => 
                 lapX = num(current.lap_number) + Math.max(0, Math.min(0.999, (time - start) / (estimate * 1000)));
             }
 
+            const speed = num(t.speed);
+            let longitudinalG = smoothedLongitudinalG;
+
+            if (previousTelemetry) {
+                const dtSeconds = (time - previousTelemetry.time) / 1000;
+                if (dtSeconds >= 0.02 && dtSeconds <= 2) {
+                    const dvMetersPerSecond = (speed - previousTelemetry.speed) / 3.6;
+                    const rawG = (dvMetersPerSecond / dtSeconds) / 9.80665;
+
+                    // Reject obvious timestamp/data spikes; an F1 car can reach several G
+                    // longitudinally, but values beyond this are almost certainly feed noise.
+                    const boundedG = Math.max(-8, Math.min(8, rawG));
+                    const alpha = 0.35;
+                    smoothedLongitudinalG = (alpha * boundedG) + ((1 - alpha) * smoothedLongitudinalG);
+                    longitudinalG = smoothedLongitudinalG;
+                }
+            }
+
+            previousTelemetry = { time, speed };
+
             return {
                 lapX,
-                speed: num(t.speed),
+                date: t.date,
+                speed,
                 throttle: num(t.throttle),
                 brake: num(t.brake),
                 rpm: num(t.rpm),
                 gear: num(t.n_gear),
-                drs: t.drs ?? 0
+                drs: t.drs ?? 0,
+                longitudinalG: Number(longitudinalG.toFixed(2))
             };
         })
         .filter(Boolean) as any[];
