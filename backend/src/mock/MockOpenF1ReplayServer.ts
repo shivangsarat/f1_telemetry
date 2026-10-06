@@ -57,6 +57,7 @@ export class MockOpenF1ReplayServer {
     private loopStartedAt = 0;
     private loopIndex = 0;
     private replayCompleted = false;
+    private paused = true;
 
     private state = new Map<string, any[]>();
     private token: string | null = null;
@@ -69,11 +70,23 @@ export class MockOpenF1ReplayServer {
         await new Promise<void>((resolve, reject) => {
             this.server = http.createServer(this.app);
             this.wss = new WebSocketServer({ server: this.server, path: '/stream' });
+            this.wss.on('connection', () => {
+                if (this.paused) {
+                    this.resetReplay();
+                    this.paused = false;
+                    this.broadcast('sessions', this.state.get('sessions') || []);
+                    this.broadcast('drivers', this.state.get('drivers') || []);
+                    this.broadcast('championship_drivers', this.state.get('championship_drivers') || []);
+                    this.broadcast('championship_teams', this.state.get('championship_teams') || []);
+                    console.log('▶️ [Mock OpenF1] Stream client connected; replay started.');
+                }
+            });
             this.server.once('error', reject);
             this.server.listen(CONFIG.MOCK_OPENF1_PORT, () => resolve());
         });
 
         this.resetReplay();
+        this.paused = true;
         this.interval = setInterval(() => this.tick(), CONFIG.MOCK_OPENF1_TICK_MS);
 
         console.log(
@@ -395,7 +408,7 @@ export class MockOpenF1ReplayServer {
     }
 
     private tick() {
-        if (Date.now() < this.loopStartedAt || this.replayCompleted) return;
+        if (this.paused || Date.now() < this.loopStartedAt || this.replayCompleted) return;
 
         const elapsedRealMs = Date.now() - this.loopStartedAt;
         const sourceNow = this.sourceStart + elapsedRealMs * CONFIG.MOCK_OPENF1_SPEED;
@@ -450,6 +463,7 @@ export class MockOpenF1ReplayServer {
             const sourceNow = Math.min(this.sourceEnd, this.sourceStart + elapsedRealMs * CONFIG.MOCK_OPENF1_SPEED);
             res.json({
                 enabled: true,
+                paused: this.paused,
                 source_session_key: this.sourceSession?.session_key,
                 mock_session_key: this.syntheticSessionKey(),
                 source_session_name: this.sourceSession?.session_name,
@@ -464,6 +478,7 @@ export class MockOpenF1ReplayServer {
         this.app.post('/control/restart', (_req, res) => {
             this.loopIndex++;
             this.resetReplay();
+            this.paused = false;
             this.broadcast('sessions', this.state.get('sessions') || []);
             this.broadcast('drivers', this.state.get('drivers') || []);
             res.json({ ok: true, mock_session_key: this.syntheticSessionKey() });
