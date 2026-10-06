@@ -49,6 +49,7 @@ export class LiveSessionEngine {
 
     private activeSessionKey: string | null = null;
     private scheduled = false;
+    private trackerScheduled = false;
     private readonly listeners = new Set<(snapshot: any) => void>();
     private readonly driverListeners = new Map<number, Set<(payload: any) => void>>();
     private readonly carData = new Map<number, any[]>();
@@ -145,7 +146,8 @@ export class LiveSessionEngine {
             }
         }
 
-        if (topic !== 'car_data') this.scheduleEmit();
+        if (topic === 'location') this.scheduleTrackerEmit();
+        else if (topic !== 'car_data') this.scheduleEmit();
     }
 
     private handleSession(session: any) {
@@ -289,6 +291,16 @@ export class LiveSessionEngine {
             cars,
             referenceDriver: this.trackReferenceDriver
         };
+    }
+
+    private scheduleTrackerEmit() {
+        if (this.trackerScheduled) return;
+        this.trackerScheduled = true;
+        setTimeout(() => {
+            this.trackerScheduled = false;
+            const snapshot = this.getSnapshot();
+            for (const listener of this.listeners) listener(snapshot);
+        }, 250);
     }
 
     private scheduleEmit() {
