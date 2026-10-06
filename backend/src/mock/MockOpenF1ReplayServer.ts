@@ -105,7 +105,8 @@ export class MockOpenF1ReplayServer {
         // High-volume telemetry is intentionally background-loaded. It must not
         // prevent the normal backend from starting or the frontend from receiving
         // its initial live snapshot.
-        void this.loadHighVolumeDataset()
+        void this.loadRemainingCoreDataset()
+            .then(() => this.loadHighVolumeDataset())
             .then(() => {
                 this.events = this.buildEvents().sort((a, b) => a.at - b.at);
                 this.replayReady = true;
@@ -300,22 +301,20 @@ export class MockOpenF1ReplayServer {
 
         if (!Number.isFinite(this.sourceStart)) throw new Error('Mock source race has no valid start time.');
 
-        console.log(`📥 [Mock OpenF1] Loading completed race session ${sessionKey} from OpenF1...`);
+        console.log(`📥 [Mock OpenF1] Loading bootstrap state for completed race session ${sessionKey}...`);
 
         this.dataset.sessions = [this.sourceSession];
 
-        // Load driver metadata first because high-volume telemetry endpoints
-        // need to be fetched per driver rather than as one enormous session query.
-        for (const topic of STREAM_TOPICS.filter(topic =>
-            topic !== 'sessions' && topic !== 'car_data' && topic !== 'location'
-        )) {
+        // Keep startup intentionally small. These endpoints are enough to paint
+        // the initial grid and weather before the full replay dataset is ready.
+        for (const topic of ['drivers', 'position', 'weather', 'championship_drivers']) {
             try {
                 const response = await this.upstreamGet(`/${topic}?session_key=${sessionKey}`);
                 this.dataset[topic] = Array.isArray(response.data) ? response.data : [];
-                console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows`);
+                console.log(`   ↳ bootstrap ${topic}: ${this.dataset[topic].length} rows`);
             } catch (error: any) {
                 this.dataset[topic] = [];
-                console.warn(`⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`, error?.message || error);
+                console.warn(`⚠️ [Mock OpenF1] Could not load bootstrap ${topic}:`, error?.message || error);
             }
             await sleep(upstreamSpacingMs());
         }
@@ -328,24 +327,46 @@ export class MockOpenF1ReplayServer {
             this.sourceEnd = datedRows.length ? Math.max(...datedRows) : this.sourceStart + 2 * 60 * 60 * 1000;
         }
 
-        if (this.sourceSession.meeting_key) {
-            const meetingResponse = await this.upstreamGet(`/meetings?meeting_key=${this.sourceSession.meeting_key}`);
-            this.meeting = meetingResponse.data?.[0] || null;
+        console.log('✅ [Mock OpenF1] Bootstrap state ready; full replay dataset will continue loading in background.');
+    }
 
-            if (this.meeting?.circuit_info_url) {
-                try {
-                    const circuitResponse = await axios.get(this.meeting.circuit_info_url, {
-                        headers: { 'User-Agent': 'FastF1/' }
-                    });
-                    this.circuitInfo = circuitResponse.data;
-                } catch (error: any) {
-                    console.warn('⚠️ [Mock OpenF1] Circuit metadata unavailable:', error?.message || error);
-                }
+    private async loadRemainingCoreDataset() {
+        const sessionKey = this.sourceSession.session_key;
+        const alreadyLoaded = new Set(['sessions', 'drivers', 'position', 'weather', 'championship_drivers']);
+
+        for (const topic of STREAM_TOPICS.filter(topic =>
+            !alreadyLoaded.has(topic) && topic !== 'car_data' && topic !== 'location'
+        )) {
+            try {
+                const response = await this.upstreamGet(`/${topic}?session_key=${sessionKey}`);
+                this.dataset[topic] = Array.isArray(response.data) ? response.data : [];
+                console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows`);
+            } catch (error: any) {
+                this.dataset[topic] = [];
+                console.warn(`⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`, error?.message || error);
             }
+            await sleep(upstreamSpacingMs());
         }
 
-        this.events = this.buildEvents().sort((a, b) => a.at - b.at);
-        console.log(`✅ [Mock OpenF1] Core race state loaded: ${this.events.length} timing/control events.`);
+        if (this.sourceSession.meeting_key) {
+            try {
+                const meetingResponse = await this.upstreamGet(`/meetings?meeting_key=${this.sourceSession.meeting_key}`);
+                this.meeting = meetingResponse.data?.[0] || null;
+
+                if (this.meeting?.circuit_info_url) {
+                    try {
+                        const circuitResponse = await axios.get(this.meeting.circuit_info_url, {
+                            headers: { 'User-Agent': 'FastF1/' }
+                        });
+                        this.circuitInfo = circuitResponse.data;
+                    } catch (error: any) {
+                        console.warn('⚠️ [Mock OpenF1] Circuit metadata unavailable:', error?.message || error);
+                    }
+                }
+            } catch (error: any) {
+                console.warn('⚠️ [Mock OpenF1] Meeting metadata unavailable:', error?.message || error);
+            }
+        }
     }
 
     private async loadHighVolumeDataset() {
