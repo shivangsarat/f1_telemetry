@@ -12,6 +12,8 @@ export type RaceCalculationInput = {
     championshipDrivers?: any[];
     championshipTeams?: any[];
     sessionResults?: any[];
+    remainingChampionshipPoints?: number;
+    sessionFinished?: boolean;
     isRace?: boolean;
 };
 
@@ -222,6 +224,28 @@ const calculatePartialLapProgress = (lap: any) => {
     if (completed === 2) return 0.66;
     if (completed === 1) return 0.33;
     return 0.05;
+};
+
+const WORLD_CHAMPION_SEASONS: Record<string, number[]> = {
+    'lewis hamilton': [2008, 2014, 2015, 2017, 2018, 2019, 2020],
+    'fernando alonso': [2005, 2006],
+    'max verstappen': [2021, 2022, 2023, 2024],
+    'lando norris': [2025]
+};
+
+const normalizeDriverName = (name: any) => String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getChampionStatus = (name: any, sessionYear: number, clinched = false) => {
+    const titleSeasons = WORLD_CHAMPION_SEASONS[normalizeDriverName(name)] || [];
+    return {
+        titles: titleSeasons.filter(year => year < sessionYear).length,
+        defending: titleSeasons.includes(sessionYear - 1),
+        clinched
+    };
 };
 
 const calculateProjectedChampionship = (drivers: any[], championship: any[], isSprint: boolean) => {
