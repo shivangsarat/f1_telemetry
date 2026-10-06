@@ -37,7 +37,15 @@ export const SessionBestsCard = React.memo(({ bests }: { bests: any }) => (
     </div>
 ));
 
-export const RaceControlWidget = React.memo(({ messages, latestToast }: { messages: any[], latestToast?: any }) => {
+export const RaceControlWidget = React.memo(({
+    messages,
+    latestToast,
+    onCloseToast
+}: {
+    messages: any[],
+    latestToast?: any,
+    onCloseToast?: () => void
+}) => {
     const [expanded, setExpanded] = useState(false);
     
     let toastTheme = null;
@@ -48,14 +56,24 @@ export const RaceControlWidget = React.memo(({ messages, latestToast }: { messag
     return (
         <div className="fixed bottom-6 right-6 z-[60] flex flex-col items-end gap-3" style={{ width: '380px' }}>
             {latestToast && toastTheme && (
-                <div className={`w-full border-l-4 ${toastTheme.border} ${toastTheme.bg} bg-gray-900 shadow-2xl pl-3 py-3 pr-4 rounded-xl animate-bounce border border-gray-700/50 backdrop-blur-md`}>
-                    <div className="flex justify-between items-start mb-1">
+                <div className={`w-full border-l-4 ${toastTheme.border} ${toastTheme.bg} bg-gray-900 shadow-2xl pl-3 py-3 pr-3 rounded-xl border border-gray-700/50 backdrop-blur-md`}>
+                    <div className="flex justify-between items-start gap-3 mb-1">
                         <span className="text-[10px] text-gray-400 font-mono tracking-widest uppercase font-bold">
                             {new Date(latestToast.date).toLocaleTimeString()} | NEW ALERT
                         </span>
-                        <span className="text-xl leading-none shadow-sm">{toastTheme.icon}</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xl leading-none shadow-sm">{toastTheme.icon}</span>
+                            <button
+                                type="button"
+                                onClick={onCloseToast}
+                                className="w-6 h-6 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 flex items-center justify-center text-sm font-black"
+                                aria-label="Close race control alert"
+                            >
+                                ×
+                            </button>
+                        </div>
                     </div>
-                    <span className={`${toastTheme.text} leading-snug font-bold block text-sm`}>{latestToast.message || latestToast.text}</span>
+                    <span className={`${toastTheme.text} leading-snug font-bold block text-sm pr-8`}>{latestToast.message || latestToast.text}</span>
                 </div>
             )}
 
