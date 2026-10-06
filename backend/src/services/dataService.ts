@@ -49,9 +49,10 @@ const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
         const now = Date.now();
         const timeSinceLast = now - lastRequestTime;
         
-        // GUARDRAIL 2: Enforce at least 500ms between ANY REST endpoint call
-        if (timeSinceLast < 500) {
-            await sleep(500 - timeSinceLast);
+        // Public OpenF1 REST needs pacing, while the in-process mock is local.
+        const minSpacingMs = CONFIG.USE_MOCK_OPENF1 ? 0 : 500;
+        if (timeSinceLast < minSpacingMs) {
+            await sleep(minSpacingMs - timeSinceLast);
         }
         
         lastRequestTime = Date.now();
