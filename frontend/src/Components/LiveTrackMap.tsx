@@ -31,10 +31,16 @@ export const LiveTrackMap = ({
     const circuitCorners = tracker?.circuit?.corners || [];
 
     const geometry = useMemo(() => {
+        const rotationRadians = (Number(tracker?.circuit?.rotation || 0) * Math.PI) / 180;
+        const rotate = (x: number, y: number) => ({
+            x: (x * Math.cos(rotationRadians)) - (y * Math.sin(rotationRadians)),
+            y: (x * Math.sin(rotationRadians)) + (y * Math.cos(rotationRadians))
+        });
+
         const allPoints = [
-            ...circuitCorners.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })),
-            ...trace.map((point: any) => ({ x: Number(point.x), y: Number(point.y) })),
-            ...cars.map((car: any) => ({ x: Number(car.x), y: Number(car.y) }))
+            ...circuitCorners.map((point: any) => rotate(Number(point.x), Number(point.y))),
+            ...trace.map((point: any) => rotate(Number(point.x), Number(point.y))),
+            ...cars.map((car: any) => rotate(Number(car.x), Number(car.y)))
         ].filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
 
         if (!allPoints.length) return null;
@@ -54,10 +60,13 @@ export const LiveTrackMap = ({
         const scaleY = (height - padding * 2) / (maxY - minY);
         const scale = Math.min(scaleX, scaleY);
 
-        const project = (x: number, y: number) => ({
-            x: padding + (x - minX) * scale,
-            y: height - padding - (y - minY) * scale
-        });
+        const project = (x: number, y: number) => {
+            const rotated = rotate(x, y);
+            return {
+                x: padding + (rotated.x - minX) * scale,
+                y: height - padding - (rotated.y - minY) * scale
+            };
+        };
 
         const officialPathSource = circuitCorners
             .filter((point: any) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
@@ -78,7 +87,7 @@ export const LiveTrackMap = ({
             officialPath: makePath(officialPathSource),
             livePath: makePath(livePathSource)
         };
-    }, [trace, cars, circuitCorners, compact]);
+    }, [trace, cars, circuitCorners, compact, tracker?.circuit?.rotation]);
 
     if (!geometry) {
         return (
