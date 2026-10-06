@@ -189,9 +189,14 @@ export class MockOpenF1ReplayServer {
 
         for (const topic of STREAM_TOPICS.filter(topic => topic !== 'sessions')) {
             const endpoint = topic;
-            const response = await this.upstreamGet(`/${endpoint}?session_key=${sessionKey}`);
-            this.dataset[topic] = Array.isArray(response.data) ? response.data : [];
-            console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows`);
+            try {
+                const response = await this.upstreamGet(`/${endpoint}?session_key=${sessionKey}`);
+                this.dataset[topic] = Array.isArray(response.data) ? response.data : [];
+                console.log(`   ↳ ${topic}: ${this.dataset[topic].length} rows`);
+            } catch (error: any) {
+                this.dataset[topic] = [];
+                console.warn(`⚠️ [Mock OpenF1] Could not load ${topic}; replay will continue without it:`, error?.message || error);
+            }
             await sleep(125);
         }
 
