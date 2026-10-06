@@ -63,12 +63,20 @@ export const Dashboard = () => {
         return () => clearTimeout(timer);
     }, [latestToast]);
 
-    const handleResultsScroll = () => {
-        const scrollTop = resultsScrollRef.current?.scrollTop || 0;
-        const shouldShow = scrollTop > 320;
+    const updateScrollTopVisibility = () => {
+        const tableScrollTop = resultsScrollRef.current?.scrollTop || 0;
+        const pageScrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+        const shouldShow = Math.max(tableScrollTop, pageScrollTop) > 320;
         setShowScrollTop(shouldShow);
         if (!shouldShow) setScrollTopDismissed(false);
     };
+
+    const handleResultsScroll = () => updateScrollTopVisibility();
+
+    useEffect(() => {
+        window.addEventListener('scroll', updateScrollTopVisibility, { passive: true });
+        return () => window.removeEventListener('scroll', updateScrollTopVisibility);
+    }, []);
 
     const driverColumns = useMemo(() => [
         { 
@@ -229,7 +237,10 @@ export const Dashboard = () => {
                 <div className="fixed right-6 bottom-24 z-50 flex items-center rounded-lg border border-gray-700 bg-gray-900/95 shadow-xl overflow-hidden">
                     <button
                         type="button"
-                        onClick={() => resultsScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+                        onClick={() => {
+                            resultsScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
                         className="px-4 py-2.5 text-xs font-black uppercase tracking-widest text-blue-400 hover:bg-gray-800 hover:text-blue-300"
                     >
                         ↑ Scroll to top
