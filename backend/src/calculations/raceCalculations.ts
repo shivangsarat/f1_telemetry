@@ -1,5 +1,7 @@
 export type RaceCalculationInput = {
     sessionInfo?: any;
+    meetingInfo?: any;
+    circuitInfo?: any;
     availableSessions?: any[];
     drivers?: any[];
     intervals?: any[];
@@ -779,6 +781,8 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         availableSessions: input.availableSessions || [],
         sessionName: sessionInfo.session_name || sessionInfo.session_type || 'Session',
         sessionInfo,
+        meetingInfo: input.meetingInfo || null,
+        circuitInfo: input.circuitInfo || null,
         results,
         raceControl: [...(input.raceControl || [])].sort((a, b) => parseDate(b.date) - parseDate(a.date)),
         championshipDrivers,
