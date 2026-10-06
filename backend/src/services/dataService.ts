@@ -332,6 +332,26 @@ export const getRaceDetails = async (sessionKey: string) => {
     const isRace = String(sessionInfo.session_type || sessionInfo.session_name || '').toLowerCase().includes('race')
         || String(sessionInfo.session_type || '').toLowerCase().includes('sprint');
 
+    const sessionYear = Number(sessionInfo.year)
+        || (sessionInfo.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : new Date().getUTCFullYear());
+    const seasonSessionsRes = await getCached(
+        `season_sessions_${sessionYear}`,
+        600000,
+        () => openF1Request(`${OPENF1_BASE}/sessions?year=${sessionYear}`)
+    );
+    const sessionStartTime = new Date(sessionInfo.date_start || 0).getTime();
+    const futurePointSessions = (seasonSessionsRes.data || []).filter((session: any) => {
+        if (String(session.session_key) === String(activeSessionKey)) return false;
+        const name = String(session.session_name || session.session_type || '').toLowerCase();
+        return new Date(session.date_start || 0).getTime() > sessionStartTime
+            && (name === 'race' || name === 'sprint');
+    });
+    const raceWinPoints = sessionYear <= 2024 ? 26 : 25;
+    const remainingChampionshipPoints = futurePointSessions.reduce((total: number, session: any) => {
+        const name = String(session.session_name || session.session_type || '').toLowerCase();
+        return total + (name === 'sprint' ? 8 : raceWinPoints);
+    }, 0);
+
     if (!availableSessions.length && sessionInfo.meeting_key) {
         const meetingSessionsRes = await getCached(
             `meeting_sessions_${sessionInfo.meeting_key}`,
@@ -381,6 +401,7 @@ export const getRaceDetails = async (sessionKey: string) => {
             raceControl: raceControlRes.data || [],
             championshipDrivers: championshipDriversRes.data || [],
             championshipTeams: championshipTeamsRes.data || [],
+            remainingChampionshipPoints,
             isRace
         })
     };
@@ -396,13 +417,17 @@ export const getCleanTelemetry = async (sessionKey: string, driverNumber: number
     const ttl = sessionKey === 'latest' ? 1000 : 86400000;
     const timeFilter = sinceTimestamp ? `&date>=${sinceTimestamp}` : '';
     
-    const laps = await getCached(`laps_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${sessionKey}&driver_number=${driverNumber}`));
-    const carData = await getCached(`car_${sessionKey}_${driverNumber}${timeFilter}`, ttl, () => openF1Request(`${OPENF1_BASE}/car_data?session_key=${sessionKey}&driver_number=${driverNumber}${timeFilter}`));
-    const stints = await getCached(`stints_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}&driver_number=${driverNumber}`));
+    const [laps, carData, stints, locations] = await Promise.all([
+        getCached(`laps_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${sessionKey}&driver_number=${driverNumber}`)),
+        getCached(`car_${sessionKey}_${driverNumber}${timeFilter}`, ttl, () => openF1Request(`${OPENF1_BASE}/car_data?session_key=${sessionKey}&driver_number=${driverNumber}${timeFilter}`)),
+        getCached(`stints_${sessionKey}_${driverNumber}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${sessionKey}&driver_number=${driverNumber}`)),
+        getCached(`location_${sessionKey}_${driverNumber}${timeFilter}`, ttl, () => openF1Request(`${OPENF1_BASE}/location?session_key=${sessionKey}&driver_number=${driverNumber}${timeFilter}`))
+    ]);
     
     return {
-        telemetry: buildTelemetryHistory(carData?.data || [], laps?.data || []),
+        telemetry: buildTelemetryHistory(carData?.data || [], laps?.data || [], locations?.data || []),
         laps: laps?.data || [],
-        stints: stints?.data || []
+        stints: stints?.data || [],
+        locations: locations?.data || []
     };
 };
