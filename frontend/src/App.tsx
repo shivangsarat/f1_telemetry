@@ -7,6 +7,7 @@ import { Home } from './Pages/Home';
 // Lazy load the heavy pages
 const Dashboard = lazy(() => import('./Pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const DriverProfile = lazy(() => import('./Pages/DriverProfile').then(m => ({ default: m.DriverProfile })));
+const LiveTracker = lazy(() => import('./Pages/LiveTracker').then(m => ({ default: m.LiveTracker })));
 
 const App = () => {
     return (
@@ -20,6 +21,7 @@ const App = () => {
                     <Route path="/" element={<Home />} />
                     <Route path="/race/:sessionKey" element={<Dashboard />} />
                     <Route path="/race/:sessionKey/driver/:driverId" element={<DriverProfile />} />
+                    <Route path="/race/:sessionKey/tracker" element={<LiveTracker />} />
                 </Routes>
             </Suspense>
         </BrowserRouter>
