@@ -216,16 +216,22 @@ export const LiveTrackMap = ({
 export const LiveTrackerWidget = ({
     tracker,
     sessionKey,
-    selectedDriver
+    selectedDriver,
+    sticky = false,
+    defaultMinimized = false
 }: {
     tracker?: TrackerState | null;
     sessionKey?: string;
     selectedDriver?: number;
+    sticky?: boolean;
+    defaultMinimized?: boolean;
 }) => {
-    const [minimized, setMinimized] = useState(false);
+    const [minimized, setMinimized] = useState(defaultMinimized);
 
     return (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden">
+        <div
+            className={`bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden ${sticky ? 'fixed left-6 bottom-6 z-[55] w-[min(520px,calc(100vw-3rem))]' : ''}`}
+        >
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
                 <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
@@ -249,7 +255,7 @@ export const LiveTrackerWidget = ({
                 </div>
             </div>
             {!minimized && (
-                <div className="p-3">
+                <div className={`p-3 ${sticky ? 'max-h-[390px] overflow-y-auto custom-scrollbar' : ''}`}>
                     <LiveTrackMap tracker={tracker} selectedDriver={selectedDriver} compact />
                 </div>
             )}
