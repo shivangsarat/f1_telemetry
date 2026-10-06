@@ -1,9 +1,11 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 import { useRaceStore } from '../store/useRaceStore';
 import { WeatherCard, SessionBestsCard, RaceControlWidget, DriverExpandedRow } from '../Components/DashboardWidgets';
 import { getTyreColor } from '../Utils/helpers';
+import { LiveTrackerWidget } from '../Components/LiveTrackMap';
+import { DriverBadges } from '../Components/DriverBadges';
 
 export const Dashboard = () => {
     const { sessionKey } = useParams();
@@ -16,6 +18,9 @@ export const Dashboard = () => {
     });
     const [histRaceControl, setHistRaceControl] = useState<any[]>([]);
     const [latestToast, setLatestToast] = useState<any>(null);
+    const [showScrollTop, setShowScrollTop] = useState(false);
+    const [scrollTopDismissed, setScrollTopDismissed] = useState(false);
+    const resultsScrollRef = useRef<HTMLDivElement>(null);
 
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
@@ -58,6 +63,13 @@ export const Dashboard = () => {
         return () => clearTimeout(timer);
     }, [latestToast]);
 
+    const handleResultsScroll = () => {
+        const scrollTop = resultsScrollRef.current?.scrollTop || 0;
+        const shouldShow = scrollTop > 320;
+        setShowScrollTop(shouldShow);
+        if (!shouldShow) setScrollTopDismissed(false);
+    };
+
     const driverColumns = useMemo(() => [
         { 
             header: 'Pos', 
@@ -82,6 +94,7 @@ export const Dashboard = () => {
                         <Link to={`/race/${sessionKey}/driver/${row.driver_number}`} onClick={(e) => e.stopPropagation()} className={`font-bold hover:underline ${isRetired ? 'text-gray-500' : 'text-blue-400'}`}>
                             {row.name} ({row.driver_number})
                         </Link>
+                        <DriverBadges driver={row} compact />
                         {isRetired && <span className="bg-red-900/30 text-red-500 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-widest border border-red-800/50 shadow-sm ml-2">{row.status}</span>}
                     </div>
                 );
@@ -164,6 +177,16 @@ export const Dashboard = () => {
                         </div>
                     </div>
 
+                    <div className="flex items-center gap-3">
+                        {isLiveSession && (
+                            <Link
+                                to={`/race/${sessionKey}/tracker`}
+                                className="bg-gray-900 border border-green-500/30 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-green-400 hover:border-green-400/60"
+                            >
+                                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                                Live Tracker
+                            </Link>
+                        )}
                     {isRaceMode && activeMaxLap > 0 && (
                         <div className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3">
                             <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
@@ -171,6 +194,7 @@ export const Dashboard = () => {
                             <span className="font-black text-white font-mono text-sm">{activeMaxLap}</span>
                         </div>
                     )}
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -178,8 +202,15 @@ export const Dashboard = () => {
                     <SessionBestsCard bests={activeBests} />
                 </div>
 
+                {isLiveSession && (
+                    <LiveTrackerWidget
+                        tracker={liveRace?.tracker}
+                        sessionKey={sessionKey}
+                    />
+                )}
+
                 <div className="bg-gray-900 rounded-xl border border-gray-800 flex-1 flex flex-col overflow-hidden shadow-2xl">
-                    <div className="overflow-y-auto flex-1 custom-scrollbar relative pb-24">
+                    <div ref={resultsScrollRef} onScroll={handleResultsScroll} className="overflow-y-auto flex-1 custom-scrollbar relative pb-24">
                         {(isLiveSession ? !liveRace : histData.loading) ? (
                             <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
                         ) : (
@@ -193,6 +224,26 @@ export const Dashboard = () => {
                     </div>
                 </div>
             </div>
+
+            {showScrollTop && !scrollTopDismissed && (
+                <div className="fixed right-6 bottom-24 z-50 flex items-center rounded-lg border border-gray-700 bg-gray-900/95 shadow-xl overflow-hidden">
+                    <button
+                        type="button"
+                        onClick={() => resultsScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+                        className="px-4 py-2.5 text-xs font-black uppercase tracking-widest text-blue-400 hover:bg-gray-800 hover:text-blue-300"
+                    >
+                        ↑ Scroll to top
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setScrollTopDismissed(true)}
+                        className="px-3 py-2.5 border-l border-gray-700 text-gray-500 hover:text-white hover:bg-gray-800"
+                        aria-label="Hide scroll to top"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
         </div>
     );
 };
