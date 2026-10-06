@@ -486,6 +486,8 @@ export class MockOpenF1ReplayServer {
             this.paused = false;
             this.broadcast('sessions', this.state.get('sessions') || []);
             this.broadcast('drivers', this.state.get('drivers') || []);
+            this.broadcast('championship_drivers', this.state.get('championship_drivers') || []);
+            this.broadcast('championship_teams', this.state.get('championship_teams') || []);
             res.json({ ok: true, mock_session_key: this.syntheticSessionKey() });
         });
 
