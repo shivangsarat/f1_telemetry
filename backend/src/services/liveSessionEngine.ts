@@ -206,7 +206,9 @@ export class LiveSessionEngine {
 
         const listeners = this.driverListeners.get(dNum);
         if (listeners?.size) {
-            const telemetry = buildTelemetryHistory([row], this.state.laps);
+            // Use recent history rather than only the newest row so derived values
+            // such as longitudinal G can be calculated from change over time.
+            const telemetry = buildTelemetryHistory(history.slice(-8), this.state.laps);
             const point = telemetry[telemetry.length - 1];
             if (point) {
                 for (const listener of listeners) listener({
