@@ -526,7 +526,29 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
     const speedRanks = Object.values(speedByDriver).sort((a, b) => b - a);
     const benchmarkSpeed = speedRanks[0] || 0;
 
-    const projectedChampionship = calculateProjectedChampionship(driverRows, championshipDrivers, false);
+    const isSprintSession = String(sessionInfo.session_name || sessionInfo.session_type || '').toLowerCase().includes('sprint');
+    const projectedChampionship = calculateProjectedChampionship(driverRows, championshipDrivers, isSprintSession);
+
+    const sessionYear = Number(sessionInfo.year)
+        || (sessionInfo.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : new Date().getUTCFullYear());
+    const sessionFinished = input.sessionFinished ?? (
+        (input.raceControl || []).some((message: any) => String(message.flag || '').toUpperCase() === 'CHEQUERED')
+        || Boolean(sessionInfo.date_end && parseDate(sessionInfo.date_end) <= Date.now())
+    );
+    const remainingChampionshipPoints = Number.isFinite(Number(input.remainingChampionshipPoints))
+        ? Number(input.remainingChampionshipPoints)
+        : Infinity;
+
+    const projectedOrder = Object.values(projectedChampionship)
+        .sort((a: any, b: any) => num(b.pointsAfter) - num(a.pointsAfter));
+    let clinchedDriverNumber: number | null = null;
+    if (sessionFinished && projectedOrder.length > 1 && Number.isFinite(remainingChampionshipPoints)) {
+        const leader: any = projectedOrder[0];
+        const canStillBeCaught = (projectedOrder.slice(1) as any[]).some(challenger =>
+            num(challenger.pointsAfter) + remainingChampionshipPoints >= num(leader.pointsAfter)
+        );
+        if (!canStillBeCaught) clinchedDriverNumber = num(leader.driver_number, -1);
+    }
 
     let results = driverRows.map(row => {
         const dNum = num(row.driver_number);
@@ -648,6 +670,11 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             liveBattle: { target: null, threat: null },
             latestPit: dPits.length ? { ...dPits[dPits.length - 1], lap: num(dPits[dPits.length - 1].lap_number ?? dPits[dPits.length - 1].lap) } : null,
             championship,
+            champion_status: getChampionStatus(
+                row.full_name || row.name || row.name_acronym,
+                sessionYear,
+                clinchedDriverNumber === dNum
+            ),
             tyreHistory,
             lapsHistory
         };
@@ -706,6 +733,11 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         results,
         raceControl: [...(input.raceControl || [])].sort((a, b) => parseDate(b.date) - parseDate(a.date)),
         championshipDrivers,
-        championshipTeams: input.championshipTeams || []
+        championshipTeams: input.championshipTeams || [],
+        championshipMeta: {
+            sessionYear,
+            remainingChampionshipPoints: Number.isFinite(remainingChampionshipPoints) ? remainingChampionshipPoints : null,
+            clinchedDriverNumber
+        }
     };
 };
