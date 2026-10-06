@@ -4,6 +4,8 @@ import { useDriverTelemetry } from '../Hooks/useDriverTelemetry';
 import { useRaceStore } from '../store/useRaceStore';
 import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, PitHistoryWidget, AllDriversPaceChart, AllDriversLapTimesChart } from '../Components/DashboardWidgets';
 import { SectorBlock } from '../Components/TelemetryWidgets';
+import { LiveTrackerWidget } from '../Components/LiveTrackMap';
+import { DriverBadges } from '../Components/DriverBadges';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
@@ -282,7 +284,12 @@ export const DriverProfile = () => {
 
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-6">
-                    <h1 className="text-3xl font-bold">Driver {driverNumber} Telemetry</h1>
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <h1 className="text-3xl font-bold">
+                            {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
+                        </h1>
+                        {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+                    </div>
                     {!isAutoScroll && (
                         <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
                             Resume Auto-Scroll →
@@ -371,11 +378,25 @@ export const DriverProfile = () => {
                                     <span className="text-3xl font-black font-mono text-purple-400 leading-none">{latestTelemetry.rpm}</span>
                                     <span className="text-gray-500 text-xs font-bold uppercase pb-0.5 tracking-widest">rpm</span>
                                 </div>
-                                <div className="flex items-center gap-3 pt-1">
-                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Est. Long G</span>
-                                    <span className={`font-mono text-xl font-black ${Number(latestTelemetry.longitudinalG || 0) < -0.15 ? 'text-red-400' : Number(latestTelemetry.longitudinalG || 0) > 0.15 ? 'text-green-400' : 'text-gray-300'}`}>
-                                        {Number(latestTelemetry.longitudinalG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.longitudinalG || 0).toFixed(2)} G
-                                    </span>
+                                <div className="grid grid-cols-3 gap-2 pt-1">
+                                    <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                                        <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Long G</span>
+                                        <span className={`font-mono text-sm font-black ${Number(latestTelemetry.longitudinalG || 0) < -0.15 ? 'text-red-400' : Number(latestTelemetry.longitudinalG || 0) > 0.15 ? 'text-green-400' : 'text-gray-300'}`}>
+                                            {Number(latestTelemetry.longitudinalG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.longitudinalG || 0).toFixed(2)}
+                                        </span>
+                                    </div>
+                                    <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                                        <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Lat G</span>
+                                        <span className="font-mono text-sm font-black text-blue-300">
+                                            {Number(latestTelemetry.lateralG || 0) >= 0 ? '+' : ''}{Number(latestTelemetry.lateralG || 0).toFixed(2)}
+                                        </span>
+                                    </div>
+                                    <div className="rounded border border-gray-800 bg-gray-950/40 px-2 py-1.5">
+                                        <span className="block text-[8px] font-bold text-gray-500 uppercase tracking-widest">Total G</span>
+                                        <span className="font-mono text-sm font-black text-white">
+                                            {Number(latestTelemetry.totalG || 0).toFixed(2)}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -411,6 +432,14 @@ export const DriverProfile = () => {
                             </div>
                         </div>
                     </div>
+                )}
+
+                {isLive && (
+                    <LiveTrackerWidget
+                        tracker={liveRace?.tracker}
+                        sessionKey={sessionKey}
+                        selectedDriver={driverNumber}
+                    />
                 )}
                 
                 {currentDriverInfo && (
