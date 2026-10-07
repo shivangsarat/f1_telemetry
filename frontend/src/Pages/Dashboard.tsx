@@ -77,6 +77,12 @@ export const Dashboard = () => {
     const activeRaceControl = isLiveSession ? (liveRace?.raceControl || []) : histRaceControl;
     const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
     const activeSessionInfo = isLiveSession ? liveRace?.sessionInfo : histData.sessionInfo;
+    const activeMeetingInfo = isLiveSession ? liveRace?.meetingInfo : histData.meetingInfo;
+    const raceName =
+        activeMeetingInfo?.meeting_name
+        || activeSessionInfo?.meeting_name
+        || (activeSessionInfo?.location ? `${activeSessionInfo.location} Grand Prix` : 'Grand Prix');
+    const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
 
     const sessionStartMs = activeSessionInfo?.date_start ? new Date(activeSessionInfo.date_start).getTime() : NaN;
     const sessionEndMs = activeSessionInfo?.date_end ? new Date(activeSessionInfo.date_end).getTime() : NaN;
@@ -247,13 +253,27 @@ export const Dashboard = () => {
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
                 <div className="flex justify-between items-center">
                     
-                    <div className="flex items-center gap-6">
-                        <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
+                    <div className="flex items-center gap-6 min-w-0 flex-wrap">
+                        <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold shrink-0">← Back</Link>
+
+                        <div className="min-w-[210px]">
+                            <div className="flex items-center gap-2">
+                                {isLiveSession && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />}
+                                <h1 className="text-lg font-black uppercase tracking-wide text-white truncate">
+                                    {raceName}
+                                </h1>
+                            </div>
+                            <div className="text-[10px] uppercase tracking-[0.18em] font-bold text-gray-500 mt-0.5">
+                                {isLiveSession ? 'Live · ' : ''}{activeSessionName || (isRaceMode ? 'Race' : 'Session')}
+                            </div>
+                        </div>
                         
-                        <div className="flex gap-2 bg-gray-900/50 p-1 rounded-lg">
+                        <div className="flex gap-2 bg-gray-900/50 p-1 rounded-lg flex-wrap">
                             {availableSessions.map((s: any) => {
                                 const isFuture = new Date(s.date_start).getTime() > Date.now();
-                                const isActive = sessionKey === String(s.session_key);
+                                const isActive = isLiveSession
+                                    ? String(activeSessionInfo?.session_key ?? '') === String(s.session_key)
+                                    : sessionKey === String(s.session_key);
 
                                 return (
                                     <button
@@ -262,7 +282,9 @@ export const Dashboard = () => {
                                         disabled={isFuture}
                                         className={`px-4 py-2 text-xs font-bold tracking-widest rounded-md transition-all ${
                                             isActive 
-                                                ? 'bg-red-600 text-white shadow-lg' 
+                                                ? isLiveSession
+                                                    ? 'bg-green-600/20 text-green-300 border border-green-500/40 shadow-lg'
+                                                    : 'bg-red-600 text-white shadow-lg'
                                                 : isFuture
                                                     ? 'text-gray-700 cursor-not-allowed opacity-50'
                                                     : 'text-gray-400 hover:text-white hover:bg-gray-800'
