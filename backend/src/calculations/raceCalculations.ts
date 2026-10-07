@@ -31,6 +31,89 @@ const parseDate = (value: any) => {
     return new Date(safe).getTime();
 };
 
+type DeletedLapInfo = {
+    deleted: true;
+    reason: string;
+    message: string;
+    date?: any;
+};
+
+const parseRaceControlLapTime = (message: string) => {
+    const match = message.match(/\bTIME\s+((?:\d+:)?\d{1,2}:\d{2}\.\d+|\d+\.\d+)\b/i);
+    if (!match) return null;
+
+    const parts = match[1].split(':').map(Number);
+    if (parts.some(part => !Number.isFinite(part))) return null;
+    if (parts.length === 1) return parts[0];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+};
+
+const buildDeletedLapIndex = (raceControl: any[] = [], laps: any[] = []) => {
+    const deleted = new Map<string, DeletedLapInfo>();
+    const deletionByDriverAndTime = new Map<string, string>();
+
+    const orderedMessages = [...raceControl].sort((a, b) => parseDate(a?.date) - parseDate(b?.date));
+
+    for (const event of orderedMessages) {
+        const message = String(event?.message || event?.text || '');
+        if (!message) continue;
+
+        const driverMatch = message.match(/\bCAR\s+(\d+)\b/i);
+        const driverNumber = num(event?.driver_number ?? driverMatch?.[1], -1);
+        if (driverNumber <= 0) continue;
+
+        const lapMatch = message.match(/\bLAP\s+(\d+)\b/i);
+
+        // For deletion/reinstatement messages, the LAP value embedded in the FIA
+        // message identifies the invalidated lap. OpenF1's structured lap_number
+        // can represent the race-control event's current lap instead (often +1),
+        // so prefer the explicit message text whenever it is present.
+        let lapNumber = num(lapMatch?.[1] ?? event?.lap_number, -1);
+
+        const lapTime = parseRaceControlLapTime(message);
+        if (lapNumber <= 0 && lapTime != null) {
+            const matchingLap = laps.find((lap: any) =>
+                num(lap.driver_number, -1) === driverNumber
+                && Math.abs(num(lap.lap_duration, -999) - lapTime) <= 0.005
+            );
+            if (matchingLap) lapNumber = num(matchingLap.lap_number, -1);
+        }
+
+        const timeKey = lapTime != null ? `${driverNumber}:${lapTime.toFixed(3)}` : null;
+        const isReinstated = /\bREINSTATED\b/i.test(message);
+        const isDeleted = /\bDELETED\b/i.test(message) && !isReinstated;
+
+        if (isReinstated) {
+            let key = lapNumber > 0 ? `${driverNumber}:${lapNumber}` : null;
+            if (!key && timeKey) key = deletionByDriverAndTime.get(timeKey) || null;
+            if (key) {
+                deleted.delete(key);
+                for (const [storedTimeKey, storedLapKey] of deletionByDriverAndTime) {
+                    if (storedLapKey === key) deletionByDriverAndTime.delete(storedTimeKey);
+                }
+            }
+            continue;
+        }
+
+        if (!isDeleted || lapNumber <= 0) continue;
+
+        const reasonMatch = message.match(/DELETED\s*-\s*(.*?)(?:\s+LAP\s+\d+\b|\s+\d{1,2}:\d{2}:\d{2}\b|$)/i);
+        const reason = reasonMatch?.[1]?.trim() || 'Race control';
+
+        const key = `${driverNumber}:${lapNumber}`;
+        deleted.set(key, {
+            deleted: true,
+            reason,
+            message,
+            date: event?.date
+        });
+        if (timeKey) deletionByDriverAndTime.set(timeKey, key);
+    }
+
+    return deleted;
+};
+
 export const formatGap = (gap: any) => {
     if (gap === null || gap === undefined || gap === '') return '-';
     if (typeof gap === 'string' && gap.toUpperCase().includes('LAP')) return gap;
@@ -549,6 +632,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         }
     }
 
+    const deletedLapIndex = buildDeletedLapIndex(input.raceControl || [], laps);
+    const isDeletedLap = (lap: any) =>
+        deletedLapIndex.has(`${num(lap.driver_number, -1)}:${num(lap.lap_number, -1)}`);
+
     const sessionBestsRaw = {
         lap: { time: Infinity, driver: null as any },
         s1: { time: Infinity, driver: null as any },
@@ -556,6 +643,7 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         s3: { time: Infinity, driver: null as any }
     };
     laps.forEach(l => {
+        if (isDeletedLap(l)) return;
         const duration = num(l.lap_duration);
         if (duration > 0 && duration < sessionBestsRaw.lap.time) sessionBestsRaw.lap = { time: duration, driver: l.driver_number };
         const s1 = num(l.duration_sector_1), s2 = num(l.duration_sector_2), s3 = num(l.duration_sector_3);
@@ -615,9 +703,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         const dNum = num(row.driver_number);
         const dLapsAll = laps.filter(l => num(l.driver_number) === dNum).sort((a, b) => num(a.lap_number) - num(b.lap_number));
         const completedLaps = dLapsAll.filter(l => num(l.lap_duration) > 0);
+        const validCompletedLaps = completedLaps.filter(l => !isDeletedLap(l));
         const dPits = pits.filter(p => num(p.driver_number) === dNum).sort((a, b) => parseDate(a.date) - parseDate(b.date));
         const dStints = stints.filter(s => num(s.driver_number) === dNum).sort((a, b) => num(a.lap_start) - num(b.lap_start));
-        const bestLapData = completedLaps.reduce((best, l) => !best || num(l.lap_duration) < num(best.lap_duration) ? l : best, null as any);
+        const bestLapData = validCompletedLaps.reduce((best, l) => !best || num(l.lap_duration) < num(best.lap_duration) ? l : best, null as any);
         const lastLapData = dLapsAll[dLapsAll.length - 1] || null;
         const completedLapNumber = completedLaps.length ? Math.max(...completedLaps.map(l => num(l.lap_number))) : 0;
         const startedLapNumber = dLapsAll.length ? Math.max(...dLapsAll.map(l => num(l.lap_number))) : 0;
@@ -633,7 +722,15 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
                 if (parseDate(p.date) <= end) positionAtEnd = num(p.position, positionAtEnd);
                 else break;
             }
-            return { lap_number: num(l.lap_number), lap_duration: num(l.lap_duration), position: positionAtEnd };
+            const deletion = deletedLapIndex.get(`${dNum}:${num(l.lap_number)}`) || null;
+            return {
+                lap_number: num(l.lap_number),
+                lap_duration: num(l.lap_duration),
+                position: positionAtEnd,
+                is_deleted: Boolean(deletion),
+                deleted_reason: deletion?.reason || null,
+                deleted_message: deletion?.message || null
+            };
         });
 
         const stintLapLimit = startedLapNumber || completedLapNumber || maxRaceLap;
