@@ -597,6 +597,7 @@ export const DriverProfile = () => {
 
                     <AllDriversLapTimesChart
                         activeResults={activeResults}
+                        currentDriverNumber={driverNumber}
                         maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
                     />
                 </div>
