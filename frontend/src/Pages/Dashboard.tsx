@@ -28,6 +28,7 @@ export const Dashboard = () => {
 
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
 
     useEffect(() => {
         if (isLiveSession) {
@@ -35,16 +36,27 @@ export const Dashboard = () => {
             return;
         }
 
+        const key = String(sessionKey || '');
+        if (!key) return;
+
+        const cached = useRaceStore.getState().historicalRaces[key];
+        if (cached) {
+            setHistData({ ...cached, loading: false });
+            setHistRaceControl(cached.raceControl || []);
+            return;
+        }
+
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
         setHistData((prev: any) => ({ ...prev, loading: true }));
 
-        fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
+        fetch(`${API_BASE}/api/race-details/${key}`).then(r => r.json())
             .then(data => {
+                cacheHistoricalRace(key, data);
                 setHistData({ ...data, loading: false });
                 setHistRaceControl(data.raceControl || []);
             })
             .catch(() => setHistData((prev: any) => ({ ...prev, loading: false })));
-    }, [sessionKey, isLiveSession, connect]);
+    }, [sessionKey, isLiveSession, connect, cacheHistoricalRace]);
 
     const activeResults = isLiveSession ? (liveRace?.results || []) : (histData.results || []);
     const activeWeather = isLiveSession ? liveRace?.weather : histData.weather;
