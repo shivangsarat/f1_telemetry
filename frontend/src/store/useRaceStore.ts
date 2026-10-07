@@ -25,7 +25,7 @@ type LiveRaceData = {
 };
 
 type DriverLiveData = {
-    driver: any;
+    driver?: any;
     telemetry: any[];
     laps: any[];
     stints: any[];
