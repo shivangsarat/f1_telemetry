@@ -100,12 +100,13 @@ export const Home = () => {
     };
 
     const driverColumns = [
-        { header: 'Pos', accessor: 'position' },
-        { header: 'Driver', accessor: 'name' },
-        { header: 'Team', accessor: 'team' },
-        { header: 'Points', accessor: 'points' },
+        { header: 'Pos', accessor: 'position', width: '12%' },
+        { header: 'Driver', accessor: 'name', width: '29%' },
+        { header: 'Team', accessor: 'team', width: '27%' },
+        { header: 'Points', accessor: 'points', width: '16%' },
         { 
-            header: 'To Next', 
+            header: 'To Next',
+            width: '16%', 
             accessor: (row: any) => (
                 <span className={`font-mono ${row.diff_to_next === '-' ? 'text-gray-500' : 'text-red-400'}`}>
                     {row.diff_to_next}
@@ -115,11 +116,12 @@ export const Home = () => {
     ];
 
     const teamColumns = [
-        { header: 'Pos', accessor: 'position' },
-        { header: 'Team', accessor: 'name' },
-        { header: 'Points', accessor: 'points' },
+        { header: 'Pos', accessor: 'position', width: '12%' },
+        { header: 'Team', accessor: 'name', width: '42%' },
+        { header: 'Points', accessor: 'points', width: '20%' },
         { 
-            header: 'To Next', 
+            header: 'To Next',
+            width: '26%', 
             accessor: (row: any) => (
                 <span className={`font-mono ${row.diff_to_next === '-' ? 'text-gray-500' : 'text-red-400'}`}>
                     {row.diff_to_next}
@@ -130,19 +132,20 @@ export const Home = () => {
 
     const pastRaceColumns = [
         { 
-            header: 'Round', 
+            header: 'Round',
+            width: '66%', 
             accessor: (row: any) => (
                 <Link to={`/race/${row.session_key}`} className="text-blue-400 hover:text-blue-300 hover:underline font-bold transition">
                     {row.round}
                 </Link>
             ) 
         },
-        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString() }
+        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString(), width: '34%' }
     ];
 
     const upcomingRaceColumns = [
-        { header: 'Round', accessor: 'round' },
-        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString() }
+        { header: 'Round', accessor: 'round', width: '66%' },
+        { header: 'Date', accessor: (row: any) => new Date(row.date).toLocaleDateString(), width: '34%' }
     ];
 
     if (!data) return <div className="p-10 text-white animate-pulse">Loading Dashboard...</div>;
@@ -172,8 +175,8 @@ export const Home = () => {
                     <div className="p-5 pb-0">
                         <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Driver Standings</h2>
                     </div>
-                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
-                        <Table data={data.drivers} columns={driverColumns} />
+                    <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar px-5 pt-2 pb-5">
+                        <Table data={data.drivers} columns={driverColumns} fit />
                     </div>
                 </div>
 
@@ -181,8 +184,8 @@ export const Home = () => {
                     <div className="p-5 pb-0">
                         <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Constructor Standings</h2>
                     </div>
-                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
-                        <Table data={data.teams} columns={teamColumns} />
+                    <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar px-5 pt-2 pb-5">
+                        <Table data={data.teams} columns={teamColumns} fit />
                     </div>
                 </div>
 
@@ -226,7 +229,7 @@ export const Home = () => {
                         </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
+                    <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar px-5 pt-2 pb-5">
                         {seasonLoading ? (
                             <div className="py-10 text-center text-xs uppercase tracking-widest font-bold text-gray-500 animate-pulse">
                                 Loading {selectedSeason} season…
@@ -234,7 +237,7 @@ export const Home = () => {
                         ) : seasonError ? (
                             <div className="py-6 text-center text-xs text-red-400">{seasonError}</div>
                         ) : seasonRaces.length > 0 ? (
-                            <Table data={seasonRaces} columns={pastRaceColumns} />
+                            <Table data={seasonRaces} columns={pastRaceColumns} fit />
                         ) : (
                             <div className="py-10 text-center text-xs uppercase tracking-widest font-bold text-gray-600">
                                 No completed races available for {selectedSeason}
@@ -247,15 +250,16 @@ export const Home = () => {
                     <div className="p-5 pb-0">
                         <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Upcoming Races</h2>
                     </div>
-                    <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
+                    <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar px-5 pt-2 pb-5">
                         <div className="w-full relative">
-                            <table className="w-full border-separate border-spacing-0 text-sm text-left">
+                            <table className="w-full table-fixed border-separate border-spacing-0 text-sm text-left">
                                 <thead>
                                     <tr>
                                         {upcomingRaceColumns.map((col, idx) => (
                                             <th
                                                 key={idx}
-                                                className="sticky top-0 z-50 p-4 bg-gray-900 font-bold uppercase tracking-wider text-xs border-b border-gray-700 shadow-sm"
+                                                className="sticky top-0 z-50 px-2 py-3 bg-gray-900 font-bold uppercase tracking-wider text-xs border-b border-gray-700 shadow-sm break-words"
+                                                style={col.width ? { width: col.width } : undefined}
                                             >
                                                 {col.header}
                                             </th>
@@ -286,8 +290,8 @@ export const Home = () => {
                                                     </tr>
                                                 )}
                                                 <tr className="group transition-colors hover:bg-gray-800/30">
-                                                    <td className="p-4">{race.round}</td>
-                                                    <td className="p-4">{new Date(race.date).toLocaleDateString()}</td>
+                                                    <td className="px-2 py-4 break-words whitespace-normal" style={{ width: '66%' }}>{race.round}</td>
+                                                    <td className="px-2 py-4 break-words whitespace-normal" style={{ width: '34%' }}>{new Date(race.date).toLocaleDateString()}</td>
                                                 </tr>
                                             </Fragment>
                                         );
