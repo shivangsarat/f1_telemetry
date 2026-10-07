@@ -12,11 +12,18 @@ export const Dashboard = () => {
     const navigate = useNavigate();
     const isLiveSession = sessionKey === 'live';
 
-    const [histData, setHistData] = useState<any>({
-        results: [], weather: null, sessionBests: null, isRace: true,
-        maxRaceLap: 0, availableSessions: [], loading: !isLiveSession
-    });
-    const [histRaceControl, setHistRaceControl] = useState<any[]>([]);
+    const initialHistoricalData = !isLiveSession && sessionKey
+        ? useRaceStore.getState().historicalRaces[String(sessionKey)]
+        : null;
+
+    const [histData, setHistData] = useState<any>(() => initialHistoricalData
+        ? { ...initialHistoricalData, loading: false }
+        : {
+            results: [], weather: null, sessionBests: null, isRace: true,
+            maxRaceLap: 0, availableSessions: [], loading: !isLiveSession
+        }
+    );
+    const [histRaceControl, setHistRaceControl] = useState<any[]>(() => initialHistoricalData?.raceControl || []);
     const [latestToast, setLatestToast] = useState<any>(null);
     const [showScrollTop, setShowScrollTop] = useState(false);
     const [scrollTopDismissed, setScrollTopDismissed] = useState(false);
