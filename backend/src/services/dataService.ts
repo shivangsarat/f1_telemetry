@@ -369,24 +369,19 @@ const mapSeasonRaceCalendar = (meetings: any[] = [], sessions: any[] = [], year:
         } : null;
     }).filter(Boolean);
 
-export const getAvailableSeasons = async () => {
-    const currentYear = new Date().getFullYear();
-    const sessionsRes = await getCached(
-        'openf1_available_seasons',
-        86400000,
-        () => openF1Request(`${OPENF1_BASE}/sessions?year>=0`)
-    );
+const OPENF1_OLDEST_SEASON = 2023;
 
-    const availableSeasons = [...new Set(
-        (sessionsRes?.data || [])
-            .map((session: any) => Number(session.year))
-            .filter((year: number) => Number.isInteger(year) && year > 0 && year <= currentYear)
-    )].sort((a, b) => b - a);
+export const getAvailableSeasons = () => {
+    const currentYear = new Date().getFullYear();
+    const availableSeasons = Array.from(
+        { length: Math.max(1, currentYear - OPENF1_OLDEST_SEASON + 1) },
+        (_, index) => currentYear - index
+    );
 
     return {
         currentSeason: currentYear,
-        oldestSeason: availableSeasons.length ? Math.min(...availableSeasons) : currentYear,
-        availableSeasons: availableSeasons.length ? availableSeasons : [currentYear]
+        oldestSeason: OPENF1_OLDEST_SEASON,
+        availableSeasons
     };
 };
 
@@ -479,7 +474,7 @@ export const getHomeData = async () => {
         liveStatus = { isLive: now >= new Date(s.date_start).getTime() && (isNaN(end) || now <= end), session_key: s.session_key, type: s.session_name };
     }
 
-    const seasonMeta = await getAvailableSeasons();
+    const seasonMeta = getAvailableSeasons();
 
     return { drivers, teams, pastRaces, upcomingRaces, nextYearRaces, liveStatus, seasonMeta };
 };
