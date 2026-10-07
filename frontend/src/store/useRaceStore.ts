@@ -6,6 +6,7 @@ type LiveRaceData = {
     sessionBests: any;
     isRace: boolean;
     maxRaceLap: number;
+    scheduledTotalLaps?: number | null;
     raceControl: any[];
     availableSessions: any[];
     sessionName?: string;
@@ -73,6 +74,7 @@ export const useRaceStore = create<RaceState>((set) => ({
                             sessionBests: msg.data.sessionBests || null,
                             isRace: Boolean(msg.data.isRace),
                             maxRaceLap: Number(msg.data.maxRaceLap || 0),
+                            scheduledTotalLaps: Number(msg.data.scheduledTotalLaps || 0) || null,
                             raceControl: msg.data.raceControl || [],
                             availableSessions: msg.data.availableSessions || [],
                             sessionName: msg.data.sessionName,
