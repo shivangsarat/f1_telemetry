@@ -6,12 +6,12 @@ import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 import { MockOpenF1Provider } from '../providers/MockOpenF1Provider';
 import { startMockOpenF1Server } from '../mock/MockOpenF1ReplayServer';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
-import { getRaceDetails } from '../services/dataService';
+import { getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
 
 export const setupWebSocket = async (server: any) => {
     // Attach WebSocket handling immediately. Provider/bootstrap initialization may
-    // take time (especially mock historical telemetry preparation), but browser
-    // connections and driver subscription intents should never be lost.
+    // take time, but browser connections and driver subscription intents should
+    // never be lost while the live provider is coming online.
     const wss = new WebSocketServer({ server });
     const engine = new LiveSessionEngine();
 
@@ -21,6 +21,7 @@ export const setupWebSocket = async (server: any) => {
     let provider: ITelemetryProvider | null = null;
     let providerReady = false;
     let engineBroadcastBound = false;
+    let lapCountSessionKey: string | null = null;
 
     const broadcastSnapshot = () => {
         const payload = JSON.stringify(engine.getSnapshot());
@@ -54,9 +55,6 @@ export const setupWebSocket = async (server: any) => {
         clientDriverSubs.set(ws, new Set());
         clientUnsubscribers.set(ws, new Map());
 
-        // Once provider/bootstrap state exists this snapshot is useful immediately.
-        // During initialization it is harmless and later gets replaced by the
-        // hydrated snapshot broadcast.
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(engine.getSnapshot()));
         }
@@ -117,8 +115,8 @@ export const setupWebSocket = async (server: any) => {
         provider = new FreeFastF1Provider(CONFIG.FASTF1_WS_URL);
     }
 
-    // Live mode intentionally does not make a browser REST call. The backend
-    // hydrates once, then the browser receives that state over our WebSocket.
+    // Live pages remain browser-WebSocket-only. The backend hydrates once from
+    // REST, then sends the resulting state to all connected clients.
     if (CONFIG.USE_MOCK_OPENF1 || CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
         try {
             const initial = await getRaceDetails('latest');
@@ -133,7 +131,27 @@ export const setupWebSocket = async (server: any) => {
     attachEngineBroadcast();
 
     await provider.connect({
-        onStreamData: (topic, data) => engine.ingest(topic, data),
+        onStreamData: (topic, data) => {
+            engine.ingest(topic, data);
+
+            if (topic === 'sessions') {
+                const rows = Array.isArray(data) ? data : [data];
+                const latestSession = rows[rows.length - 1];
+                const sessionKey = latestSession?.session_key != null ? String(latestSession.session_key) : null;
+                const sessionType = String(latestSession?.session_type || latestSession?.session_name || '').toLowerCase();
+
+                if (
+                    sessionKey
+                    && sessionKey !== lapCountSessionKey
+                    && (sessionType.includes('race') || sessionType.includes('sprint'))
+                ) {
+                    lapCountSessionKey = sessionKey;
+                    void getScheduledTotalLaps(latestSession)
+                        .then(total => engine.setScheduledTotalLaps(total))
+                        .catch(error => console.warn('⚠️ Unable to refresh scheduled lap count:', error?.message || error));
+                }
+            }
+        },
         onTelemetry: (driverNumber, point) => {
             if (!CONFIG.USE_MOCK_OPENF1 && CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
                 for (const [ws, subs] of clientDriverSubs) {
@@ -152,8 +170,8 @@ export const setupWebSocket = async (server: any) => {
 
     providerReady = true;
 
-    // Subscriptions can arrive while the provider is still initializing. Apply
-    // all queued intents now so driver telemetry starts without a browser reload.
+    // Driver subscriptions can arrive before provider initialization completes.
+    // Apply all queued intents now so telemetry starts without a browser reload.
     const activeDrivers = new Set<number>();
     for (const subs of clientDriverSubs.values()) {
         for (const driver of subs) activeDrivers.add(driver);
