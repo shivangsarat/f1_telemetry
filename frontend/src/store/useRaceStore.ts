@@ -35,9 +35,30 @@ interface RaceState {
     connected: boolean;
     liveRace: LiveRaceData | null;
     driverLive: Record<number, DriverLiveData>;
+
+    // Historical data is immutable once a session has finished, so keep it in
+    // memory for the lifetime of the SPA. Route changes should not force the
+    // browser to download and recalculate the same session again.
+    historicalRaces: Record<string, any>;
+    historicalDrivers: Record<string, DriverLiveData>;
+
+    // Preserve the home/season view as well so the app can return from a race
+    // without flashing through a full reload. Home data may still be refreshed
+    // in the background after its short TTL.
+    homeData: any | null;
+    homeDataUpdatedAt: number;
+    selectedSeason: number | null;
+    seasonRaces: Record<number, any[]>;
+
     connect: () => void;
     subscribeToDriver: (driverNumber: number) => void;
     unsubscribeFromDriver: (driverNumber: number) => void;
+
+    cacheHistoricalRace: (sessionKey: string, data: any) => void;
+    cacheHistoricalDriver: (sessionKey: string, driverNumber: number, data: DriverLiveData) => void;
+    cacheHomeData: (data: any) => void;
+    setSelectedSeason: (year: number) => void;
+    cacheSeasonRaces: (year: number, races: any[]) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -49,6 +70,12 @@ export const useRaceStore = create<RaceState>((set) => ({
     connected: false,
     liveRace: null,
     driverLive: {},
+    historicalRaces: {},
+    historicalDrivers: {},
+    homeData: null,
+    homeDataUpdatedAt: 0,
+    selectedSeason: null,
+    seasonRaces: {},
 
     connect: () => {
         if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
@@ -158,5 +185,42 @@ export const useRaceStore = create<RaceState>((set) => ({
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'UNSUBSCRIBE_DRIVER', driver: driverNumber }));
         }
+    },
+
+    cacheHistoricalRace: (sessionKey: string, data: any) => {
+        set(state => ({
+            historicalRaces: {
+                ...state.historicalRaces,
+                [String(sessionKey)]: data
+            }
+        }));
+    },
+
+    cacheHistoricalDriver: (sessionKey: string, driverNumber: number, data: DriverLiveData) => {
+        const key = `${sessionKey}:${driverNumber}`;
+        set(state => ({
+            historicalDrivers: {
+                ...state.historicalDrivers,
+                [key]: data
+            }
+        }));
+    },
+
+    cacheHomeData: (data: any) => {
+        set({
+            homeData: data,
+            homeDataUpdatedAt: Date.now()
+        });
+    },
+
+    setSelectedSeason: (year: number) => set({ selectedSeason: year }),
+
+    cacheSeasonRaces: (year: number, races: any[]) => {
+        set(state => ({
+            seasonRaces: {
+                ...state.seasonRaces,
+                [year]: races
+            }
+        }));
     }
 }));
