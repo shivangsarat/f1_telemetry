@@ -64,7 +64,12 @@ const buildDeletedLapIndex = (raceControl: any[] = [], laps: any[] = []) => {
         if (driverNumber <= 0) continue;
 
         const lapMatch = message.match(/\bLAP\s+(\d+)\b/i);
-        let lapNumber = num(event?.lap_number ?? lapMatch?.[1], -1);
+
+        // For deletion/reinstatement messages, the LAP value embedded in the FIA
+        // message identifies the invalidated lap. OpenF1's structured lap_number
+        // can represent the race-control event's current lap instead (often +1),
+        // so prefer the explicit message text whenever it is present.
+        let lapNumber = num(lapMatch?.[1] ?? event?.lap_number, -1);
 
         const lapTime = parseRaceControlLapTime(message);
         if (lapNumber <= 0 && lapTime != null) {
