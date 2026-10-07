@@ -16,6 +16,7 @@ export type RaceCalculationInput = {
     sessionResults?: any[];
     remainingChampionshipPoints?: number;
     sessionFinished?: boolean;
+    scheduledTotalLaps?: number | null;
     isRace?: boolean;
 };
 
@@ -790,6 +791,9 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         sessionBests,
         isRace,
         maxRaceLap,
+        scheduledTotalLaps: Number.isFinite(Number(input.scheduledTotalLaps)) && Number(input.scheduledTotalLaps) > 0
+            ? Number(input.scheduledTotalLaps)
+            : null,
         availableSessions: input.availableSessions || [],
         sessionName: sessionInfo.session_name || sessionInfo.session_type || 'Session',
         sessionInfo,
