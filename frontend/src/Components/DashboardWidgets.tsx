@@ -104,25 +104,6 @@ export const RaceControlWidget = React.memo(({
     );
 });
 
-// --- HELPER: Mid-lap progression for smooth timeline animation ---
-const calculatePartialLapProgress = (driver: any) => {
-    if (driver.status === 'Finished' || driver.status === 'DNF' || driver.status?.toUpperCase().includes('OUT') || driver.status === 'Retired') return 0;
-    let fraction = 0;
-    const seg1 = driver.segments_sector_1 || driver.seg1;
-    const seg2 = driver.segments_sector_2 || driver.seg2;
-    const seg3 = driver.segments_sector_3 || driver.seg3;
-
-    if (seg3 && seg3.length > 0) fraction = 0.66 + (Math.min(seg3.length, 10) / 10) * 0.33;
-    else if (seg2 && seg2.length > 0) fraction = 0.33 + (Math.min(seg2.length, 10) / 10) * 0.33;
-    else if (seg1 && seg1.length > 0) fraction = (Math.min(seg1.length, 10) / 10) * 0.33;
-    else {
-        if (driver.s2) fraction = 0.66;
-        else if (driver.s1) fraction = 0.33;
-        else fraction = 0.05; 
-    }
-    return Math.min(fraction, 0.99); 
-};
-
 // // --- HELPER: Clean interval strings ---
 // const getIntervalStr = (d: any) => {
 //     let val = d.interval ? String(d.interval) : (d.gap_to_leader ? String(d.gap_to_leader) : '0.000s');
@@ -135,7 +116,7 @@ const calculatePartialLapProgress = (driver: any) => {
 
 
 // --- COMPONENT: Championship Points Widget (Replaces Live Battles) ---
-export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: any, liveStandings?: any }) => {
+export const DriverChampionshipWidget = ({ driver, liveStandings: _liveStandings }: { driver: any, liveStandings?: any }) => {
     const pointsBefore = driver.championship?.pointsStart ?? 0;
     // Backend uses posStart; keep position as a legacy fallback for older payloads.
     const rawPosStart = driver.championship?.posStart ?? driver.championship?.position;
@@ -541,7 +522,7 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
                 width: isCurrent ? 3 : 1.5,
                 points: { show: true, size: isCurrent ? 5 : 3.5, fill: `#${driver.team_color || 'ffffff'}` },
                 spanGaps: true,
-                value: (u, v) => v == null ? '--' : `P${v}`
+                value: (_u, v) => v == null ? '--' : `P${v}`
             });
         });
 
@@ -563,7 +544,7 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
                     space: 40,
                     label: "POSITION",
                     labelSize: 30,
-                    values: (u, vals) => vals.map(v => v == null ? '' : `P${v}`)
+                    values: (_u, vals) => vals.map(v => v == null ? '' : `P${v}`)
                 }
             ],
             series: seriesConfig,
@@ -675,7 +656,7 @@ export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeR
         const series: uPlot.Series[] = [{ label: 'Lap' }];
 
         visibleResults.forEach(driver => {
-            const byLap = new Map((driver.lapsHistory || []).map((lap: any) => [Number(lap.lap_number), Number(lap.lap_duration)]));
+            const byLap = new Map<number, number>((driver.lapsHistory || []).map((lap: any) => [Number(lap.lap_number), Number(lap.lap_duration)]));
             data.push(x.map(lap => byLap.get(lap) ?? null));
             series.push({
                 label: driver.name || String(driver.driver_number),
