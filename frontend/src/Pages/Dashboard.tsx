@@ -35,14 +35,14 @@ export const Dashboard = () => {
         }
 
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
-        setHistData(prev => ({ ...prev, loading: true }));
+        setHistData((prev: any) => ({ ...prev, loading: true }));
 
         fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
             .then(data => {
                 setHistData({ ...data, loading: false });
                 setHistRaceControl(data.raceControl || []);
             })
-            .catch(() => setHistData(prev => ({ ...prev, loading: false })));
+            .catch(() => setHistData((prev: any) => ({ ...prev, loading: false })));
     }, [sessionKey, isLiveSession, connect]);
 
     const activeResults = isLiveSession ? (liveRace?.results || []) : (histData.results || []);
