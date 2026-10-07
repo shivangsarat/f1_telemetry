@@ -303,7 +303,10 @@ export const getHomeData = async () => {
 
     const now = Date.now();
     const pastRaces = races.filter((r: any) => new Date(r.date).getTime() <= now).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const upcomingRaces = races.filter((r: any) => new Date(r.date).getTime() > now).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const upcomingRaces = [
+        ...races.filter((r: any) => new Date(r.date).getTime() > now),
+        ...nextYearRaces
+    ].sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let liveStatus = { isLive: false, session_key: null, type: '' };
     if (liveRes?.data?.[0]) {
