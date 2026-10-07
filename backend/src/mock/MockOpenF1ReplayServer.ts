@@ -51,6 +51,7 @@ export class MockOpenF1ReplayServer {
     private meeting: any = null;
     private circuitInfo: any = null;
     private sourceSession: any = null;
+    private scheduledTotalLaps: number | null = null;
 
     private events: ReplayEvent[] = [];
     private cursor = 0;
@@ -132,7 +133,7 @@ export class MockOpenF1ReplayServer {
     }
 
     private broadcastBaseline() {
-        for (const topic of ['sessions', 'drivers', 'championship_drivers', 'championship_teams', 'position', 'stints', 'weather']) {
+        for (const topic of ['sessions', 'drivers', 'championship_drivers', 'championship_teams', 'position', 'stints', 'weather', 'lap_count']) {
             this.broadcast(topic, this.state.get(topic) || []);
         }
     }
@@ -307,7 +308,7 @@ export class MockOpenF1ReplayServer {
 
         // Keep startup intentionally small. These endpoints are enough to paint
         // the initial grid and weather before the full replay dataset is ready.
-        for (const topic of ['drivers', 'position', 'weather', 'championship_drivers']) {
+        for (const topic of ['drivers', 'position', 'weather', 'championship_drivers', 'session_result']) {
             try {
                 const response = await this.upstreamGet(`/${topic}?session_key=${sessionKey}`);
                 this.dataset[topic] = Array.isArray(response.data) ? response.data : [];
@@ -319,6 +320,35 @@ export class MockOpenF1ReplayServer {
             await sleep(upstreamSpacingMs());
         }
 
+        const resultLapCounts = (this.dataset.session_result || [])
+            .map((row: any) => Number(row.number_of_laps ?? row.laps ?? row.lap_count))
+            .filter((laps: number) => Number.isFinite(laps) && laps > 0);
+        this.scheduledTotalLaps = resultLapCounts.length ? Math.max(...resultLapCounts) : null;
+        if (this.scheduledTotalLaps) {
+            this.sourceSession = { ...this.sourceSession, total_laps: this.scheduledTotalLaps };
+            this.dataset.sessions = [this.sourceSession];
+        }
+
+        if (this.sourceSession.meeting_key) {
+            try {
+                const meetingResponse = await this.upstreamGet(`/meetings?meeting_key=${this.sourceSession.meeting_key}`);
+                this.meeting = meetingResponse.data?.[0] || null;
+
+                if (this.meeting?.circuit_info_url) {
+                    try {
+                        const circuitResponse = await axios.get(this.meeting.circuit_info_url, {
+                            headers: { 'User-Agent': 'FastF1/' }
+                        });
+                        this.circuitInfo = circuitResponse.data;
+                    } catch (error: any) {
+                        console.warn('⚠️ [Mock OpenF1] Circuit metadata unavailable during bootstrap:', error?.message || error);
+                    }
+                }
+            } catch (error: any) {
+                console.warn('⚠️ [Mock OpenF1] Meeting metadata unavailable during bootstrap:', error?.message || error);
+            }
+        }
+
         if (!Number.isFinite(this.sourceEnd)) {
             const datedRows = Object.values(this.dataset)
                 .flat()
@@ -327,12 +357,15 @@ export class MockOpenF1ReplayServer {
             this.sourceEnd = datedRows.length ? Math.max(...datedRows) : this.sourceStart + 2 * 60 * 60 * 1000;
         }
 
-        console.log('✅ [Mock OpenF1] Bootstrap state ready; full replay dataset will continue loading in background.');
+        console.log(
+            `✅ [Mock OpenF1] Bootstrap state ready${this.scheduledTotalLaps ? ` (${this.scheduledTotalLaps} scheduled laps)` : ''}; ` +
+            'full replay dataset will continue loading in background.'
+        );
     }
 
     private async loadRemainingCoreDataset() {
         const sessionKey = this.sourceSession.session_key;
-        const alreadyLoaded = new Set(['sessions', 'drivers', 'position', 'weather', 'championship_drivers']);
+        const alreadyLoaded = new Set(['sessions', 'drivers', 'position', 'weather', 'championship_drivers', 'session_result']);
 
         for (const topic of STREAM_TOPICS.filter(topic =>
             !alreadyLoaded.has(topic) && topic !== 'car_data' && topic !== 'location'
@@ -348,25 +381,6 @@ export class MockOpenF1ReplayServer {
             await sleep(upstreamSpacingMs());
         }
 
-        if (this.sourceSession.meeting_key) {
-            try {
-                const meetingResponse = await this.upstreamGet(`/meetings?meeting_key=${this.sourceSession.meeting_key}`);
-                this.meeting = meetingResponse.data?.[0] || null;
-
-                if (this.meeting?.circuit_info_url) {
-                    try {
-                        const circuitResponse = await axios.get(this.meeting.circuit_info_url, {
-                            headers: { 'User-Agent': 'FastF1/' }
-                        });
-                        this.circuitInfo = circuitResponse.data;
-                    } catch (error: any) {
-                        console.warn('⚠️ [Mock OpenF1] Circuit metadata unavailable:', error?.message || error);
-                    }
-                }
-            } catch (error: any) {
-                console.warn('⚠️ [Mock OpenF1] Meeting metadata unavailable:', error?.message || error);
-            }
-        }
     }
 
     private async loadHighVolumeDataset() {
@@ -586,6 +600,14 @@ export class MockOpenF1ReplayServer {
         const firstWeather = [...(this.dataset.weather || [])]
             .sort((a, b) => parseDate(a.date) - parseDate(b.date))[0];
         if (firstWeather) this.applyState('weather', this.transformRow(firstWeather, 'weather'));
+
+        if (this.scheduledTotalLaps) {
+            this.applyState('lap_count', {
+                CurrentLap: 1,
+                TotalLaps: this.scheduledTotalLaps,
+                session_key: this.syntheticSessionKey()
+            });
+        }
     }
 
     private broadcast(topic: string, rows: any[]) {
@@ -633,9 +655,19 @@ export class MockOpenF1ReplayServer {
     }
 
     private filterRows(rows: any[], query: any) {
-        const ignored = new Set(['session_key', 'year', 'session_name']);
         return rows.filter(row => Object.entries(query).every(([key, value]) => {
-            if (ignored.has(key) || value === undefined) return true;
+            if (value === undefined) return true;
+
+            if (key === 'session_key' && String(value).toLowerCase() === 'latest') {
+                return true;
+            }
+
+            if (key === 'year') {
+                const rowYear = Number(row.year)
+                    || (row.date_start ? new Date(row.date_start).getUTCFullYear() : NaN);
+                return Number(rowYear) === Number(value);
+            }
+
             return String(row[key]) === String(value);
         }));
     }
