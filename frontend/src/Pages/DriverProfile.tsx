@@ -254,6 +254,11 @@ export const DriverProfile = () => {
     const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
 
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
+    const deletedLapByNumber = new Map<number, any>(
+        (currentDriverInfo?.lapsHistory || [])
+            .filter((lap: any) => lap?.is_deleted)
+            .map((lap: any) => [Number(lap.lap_number), lap])
+    );
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
@@ -261,14 +266,17 @@ export const DriverProfile = () => {
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
-    const bestLapObj = completedLaps.length > 0 ? completedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, completedLaps[0]) : null;
+    const validCompletedLaps = completedLaps.filter((lap: any) => !deletedLapByNumber.has(Number(lap.lap_number)));
+    const bestLapObj = validCompletedLaps.length > 0
+        ? validCompletedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, validCompletedLaps[0])
+        : null;
     const sessionBests = isLive ? liveRace?.sessionBests : raceDetails?.sessionBests;
     const isSessionBestLap = (value: any) => {
         const lap = Number(value);
         const best = Number(sessionBests?.lap?.raw);
         return Number.isFinite(lap) && Number.isFinite(best) && Math.abs(lap - best) < 0.0005;
     };
-    const personalBestSectors = completedLaps.reduce((best: any, lap: any) => ({
+    const personalBestSectors = validCompletedLaps.reduce((best: any, lap: any) => ({
         s1: Math.min(best.s1, Number(lap.duration_sector_1) || Infinity),
         s2: Math.min(best.s2, Number(lap.duration_sector_2) || Infinity),
         s3: Math.min(best.s3, Number(lap.duration_sector_3) || Infinity),
@@ -545,6 +553,7 @@ export const DriverProfile = () => {
                                         const lapDuration = lap.lap_duration;
                                         const bestDuration = bestLapObj?.lap_duration;
                                         const delta = (lapDuration && bestDuration) ? lapDuration - bestDuration : null;
+                                        const deletedLap = deletedLapByNumber.get(Number(lap.lap_number));
                                         const stint = activeData.stints?.find((s: any) => s.lap_start <= lap.lap_number && (s.lap_end >= lap.lap_number || s.lap_end === 0));
                                         const tyreCompound = stint?.compound || 'UNKNOWN';
 
@@ -564,10 +573,28 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <span className="font-bold w-12 text-gray-300">L{lap.lap_number}</span>
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getTyreColor(tyreCompound) }} title={tyreCompound}></div>
-                                                    <span className={`font-bold ${isSessionBestLap(lapDuration) ? 'text-purple-400' : (delta === 0 ? 'text-green-400' : 'text-white')}`}>{formatLapTime(lapDuration)}</span>
-                                                    <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
-                                                        {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
+                                                    <span className={`font-bold ${
+                                                        deletedLap
+                                                            ? 'text-red-300'
+                                                            : isSessionBestLap(lapDuration)
+                                                                ? 'text-purple-400'
+                                                                : (delta === 0 ? 'text-green-400' : 'text-white')
+                                                    }`}>
+                                                        {formatLapTime(lapDuration)}
                                                     </span>
+                                                    {!deletedLap && (
+                                                        <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
+                                                            {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
+                                                        </span>
+                                                    )}
+                                                    {deletedLap && (
+                                                        <span
+                                                            className="text-[9px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-300 font-black uppercase tracking-wider whitespace-nowrap"
+                                                            title={deletedLap.deleted_message || deletedLap.deleted_reason || 'Lap deleted by race control'}
+                                                        >
+                                                            Lap Deleted
+                                                        </span>
+                                                    )}
                                                 </div>
 
                                                 <div className="flex items-center gap-3">
