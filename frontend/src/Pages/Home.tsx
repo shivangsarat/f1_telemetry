@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
 import { useRaceStore } from '../store/useRaceStore';
@@ -248,7 +248,53 @@ export const Home = () => {
                         <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Upcoming Races</h2>
                     </div>
                     <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
-                        <Table data={data.upcomingRaces} columns={upcomingRaceColumns} />
+                        <div className="w-full relative">
+                            <table className="w-full border-separate border-spacing-0 text-sm text-left">
+                                <thead>
+                                    <tr>
+                                        {upcomingRaceColumns.map((col, idx) => (
+                                            <th
+                                                key={idx}
+                                                className="sticky top-0 z-50 p-4 bg-gray-900 font-bold uppercase tracking-wider text-xs border-b border-gray-700 shadow-sm"
+                                            >
+                                                {col.header}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-800/50">
+                                    {(data.upcomingRaces || []).map((race: any, index: number) => {
+                                        const raceYear = Number(race.year || new Date(race.date).getFullYear());
+                                        const previousYear = index > 0
+                                            ? Number(data.upcomingRaces[index - 1]?.year || new Date(data.upcomingRaces[index - 1]?.date).getFullYear())
+                                            : null;
+                                        const showSeasonDivider = previousYear !== null && raceYear !== previousYear;
+
+                                        return (
+                                            <Fragment key={race.session_key || `${raceYear}-${race.round}-${race.date}`}>
+                                                {showSeasonDivider && (
+                                                    <tr>
+                                                        <td colSpan={2} className="px-4 py-3 bg-gray-950/80 border-y border-blue-500/20">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="h-px flex-1 bg-gray-800" />
+                                                                <span className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-400 whitespace-nowrap">
+                                                                    {raceYear} Season
+                                                                </span>
+                                                                <span className="h-px flex-1 bg-gray-800" />
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                <tr className="group transition-colors hover:bg-gray-800/30">
+                                                    <td className="p-4">{race.round}</td>
+                                                    <td className="p-4">{new Date(race.date).toLocaleDateString()}</td>
+                                                </tr>
+                                            </Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
