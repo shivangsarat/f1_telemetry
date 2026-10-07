@@ -16,6 +16,7 @@ export type RaceCalculationInput = {
     sessionResults?: any[];
     remainingChampionshipPoints?: number;
     sessionFinished?: boolean;
+    scheduledTotalLaps?: number | null;
     isRace?: boolean;
 };
 
@@ -243,8 +244,10 @@ const normalizeDriverName = (name: any) => String(name || '')
 
 const getChampionStatus = (name: any, sessionYear: number, clinched = false) => {
     const titleSeasons = WORLD_CHAMPION_SEASONS[normalizeDriverName(name)] || [];
+    const priorTitleSeasons = titleSeasons.filter(year => year < sessionYear);
     return {
-        titles: titleSeasons.filter(year => year < sessionYear).length,
+        titles: priorTitleSeasons.length,
+        years: priorTitleSeasons,
         defending: titleSeasons.includes(sessionYear - 1),
         clinched
     };
@@ -601,6 +604,13 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         if (!canStillBeCaught) clinchedDriverNumber = num(leader.driver_number, -1);
     }
 
+    type LiveBattleRef = {
+        dNum: number;
+        name: any;
+        pos: number;
+        interval: string;
+    } | null;
+
     let results = driverRows.map(row => {
         const dNum = num(row.driver_number);
         const dLapsAll = laps.filter(l => num(l.driver_number) === dNum).sort((a, b) => num(a.lap_number) - num(b.lap_number));
@@ -718,7 +728,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
                 speedDeficit: Math.max(0, benchmarkSpeed - driverSpeed),
                 consistencyStdDev
             },
-            liveBattle: { target: null, threat: null },
+            liveBattle: {
+                target: null as LiveBattleRef,
+                threat: null as LiveBattleRef
+            },
             latestPit: dPits.length ? { ...dPits[dPits.length - 1], lap: num(dPits[dPits.length - 1].lap_number ?? dPits[dPits.length - 1].lap) } : null,
             championship,
             champion_status: getChampionStatus(
@@ -778,6 +791,9 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         sessionBests,
         isRace,
         maxRaceLap,
+        scheduledTotalLaps: Number.isFinite(Number(input.scheduledTotalLaps)) && Number(input.scheduledTotalLaps) > 0
+            ? Number(input.scheduledTotalLaps)
+            : null,
         availableSessions: input.availableSessions || [],
         sessionName: sessionInfo.session_name || sessionInfo.session_type || 'Session',
         sessionInfo,
