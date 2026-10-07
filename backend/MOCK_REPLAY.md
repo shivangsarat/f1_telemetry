@@ -93,3 +93,20 @@ USE_MOCK_OPENF1=false
 ```
 
 The backend then returns to the normal configured live provider without any frontend changes.
+
+
+## Compatibility with shared live UI
+
+The mock branch also carries the shared frontend/backend changes from `realtime-streaming-shared-fixes`.
+
+The replay bootstrap now exposes the same metadata those features expect:
+
+- scheduled race distance via the mock session's `total_laps`
+- a synthetic `lap_count` stream payload with `TotalLaps`
+- meeting metadata before the first application REST bootstrap
+- circuit metadata before the first tracker render
+- realistic `year` and `session_name` filtering on mock REST endpoints
+
+This means the mock live race can exercise the same race-lap header, Grand Prix/session titles,
+tracker fallback, driver telemetry, session-preserving navigation, chart controls, and other shared
+live UI without falling through to the real OpenF1/F1 LiveTiming APIs for those values.
