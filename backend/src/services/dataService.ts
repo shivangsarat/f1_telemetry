@@ -257,6 +257,17 @@ export const getHomeData = async () => {
         sessionsRes = await getCached('sessions_race_2024', 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=2024&session_name=Race`));
     }
 
+    let nextYearMeetingsRes: any = { data: [] };
+    let nextYearSessionsRes: any = { data: [] };
+    try {
+        [nextYearMeetingsRes, nextYearSessionsRes] = await Promise.all([
+            getCached(`meetings_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=${currentYear + 1}`)),
+            getCached(`sessions_race_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear + 1}&session_name=Race`))
+        ]);
+    } catch (error: any) {
+        console.warn(`Next-year calendar for ${currentYear + 1} is not available yet:`, error?.message || error);
+    }
+
     const driversData = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings || [];
     const drivers = driversData.map((d: any, idx: number) => ({
         position: d.position, 
@@ -274,10 +285,21 @@ export const getHomeData = async () => {
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
-    const races = (meetingsRes?.data || []).map((m: any) => {
-        const race = sessionsRes?.data?.find((s: any) => s.meeting_key === m.meeting_key);
-        return race ? { round: m.meeting_name, location: m.location, date: m.date_start, session_key: race.session_key } : null;
-    }).filter(Boolean);
+    const mapCalendar = (meetings: any[] = [], sessions: any[] = [], year: number) =>
+        meetings.map((m: any) => {
+            const race = sessions.find((s: any) => s.meeting_key === m.meeting_key);
+            return race ? {
+                round: m.meeting_name,
+                location: m.location,
+                date: race.date_start || m.date_start,
+                session_key: race.session_key,
+                year
+            } : null;
+        }).filter(Boolean);
+
+    const races = mapCalendar(meetingsRes?.data || [], sessionsRes?.data || [], currentYear);
+    const nextYearRaces = mapCalendar(nextYearMeetingsRes?.data || [], nextYearSessionsRes?.data || [], currentYear + 1)
+        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const now = Date.now();
     const pastRaces = races.filter((r: any) => new Date(r.date).getTime() <= now).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -290,7 +312,7 @@ export const getHomeData = async () => {
         liveStatus = { isLive: now >= new Date(s.date_start).getTime() && (isNaN(end) || now <= end), session_key: s.session_key, type: s.session_name };
     }
 
-    return { drivers, teams, pastRaces, upcomingRaces, liveStatus };
+    return { drivers, teams, pastRaces, upcomingRaces, nextYearRaces, liveStatus };
 };
 
 export const getRaceDetails = async (sessionKey: string) => {
