@@ -50,6 +50,10 @@ export const Dashboard = () => {
     const activeBests = isLiveSession ? liveRace?.sessionBests : histData.sessionBests;
     const isRaceMode = isLiveSession ? Boolean(liveRace?.isRace) : Boolean(histData.isRace);
     const activeMaxLap = isLiveSession ? Number(liveRace?.maxRaceLap || 0) : Number(histData.maxRaceLap || 0);
+    const scheduledTotalLaps = isLiveSession
+        ? Number(liveRace?.scheduledTotalLaps || 0)
+        : Number(histData.scheduledTotalLaps || 0);
+    const displayedRaceLaps = scheduledTotalLaps > 0 ? scheduledTotalLaps : activeMaxLap;
     const activeRaceControl = isLiveSession ? (liveRace?.raceControl || []) : histRaceControl;
     const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
 
@@ -233,11 +237,14 @@ export const Dashboard = () => {
                                 Live Tracker
                             </Link>
                         )}
-                    {isRaceMode && activeMaxLap > 0 && (
-                        <div className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3">
+                    {isRaceMode && displayedRaceLaps > 0 && (
+                        <div
+                            className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
+                            title={scheduledTotalLaps > 0 ? 'Scheduled race distance' : 'Scheduled distance unavailable; showing laps observed so far'}
+                        >
                             <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
-                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Total Laps</span>
-                            <span className="font-black text-white font-mono text-sm">{activeMaxLap}</span>
+                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Race Laps</span>
+                            <span className="font-black text-white font-mono text-sm">{displayedRaceLaps}</span>
                         </div>
                     )}
                     </div>
