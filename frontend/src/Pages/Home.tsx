@@ -6,13 +6,46 @@ const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
 
 export const Home = () => {
     const [data, setData] = useState<any>(null);
+    const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+    const [seasonRaces, setSeasonRaces] = useState<any[]>([]);
+    const [seasonLoading, setSeasonLoading] = useState(false);
+    const [seasonError, setSeasonError] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
         fetch(`${API_BASE}/api/home`)
-            .then(r => r.json())
-            .then(setData);
+            .then(r => {
+                if (!r.ok) throw new Error('Failed to load dashboard');
+                return r.json();
+            })
+            .then(payload => {
+                setData(payload);
+                const currentSeason = Number(payload?.seasonMeta?.currentSeason || new Date().getFullYear());
+                setSelectedSeason(currentSeason);
+                setSeasonRaces(payload?.pastRaces || []);
+            })
+            .catch(() => setSeasonError('Unable to load dashboard data.'));
     }, []);
+
+    const changeSeason = async (year: number) => {
+        if (!Number.isInteger(year) || year === selectedSeason) return;
+
+        setSelectedSeason(year);
+        setSeasonLoading(true);
+        setSeasonError('');
+
+        try {
+            const response = await fetch(`${API_BASE}/api/seasons/${year}/races`);
+            if (!response.ok) throw new Error('Failed to load season');
+            const payload = await response.json();
+            setSeasonRaces(payload.races || []);
+        } catch {
+            setSeasonRaces([]);
+            setSeasonError(`Unable to load ${year} season races.`);
+        } finally {
+            setSeasonLoading(false);
+        }
+    };
 
     const driverColumns = [
         { header: 'Pos', accessor: 'position' },
@@ -103,10 +136,44 @@ export const Home = () => {
 
                 <div className="bg-gray-900 rounded-xl border border-gray-800 h-[800px] flex flex-col overflow-hidden shadow-xl">
                     <div className="p-5 pb-0">
-                        <h2 className="font-bold uppercase tracking-wider text-gray-400 mb-4">Past Races</h2>
+                        <div className="flex items-center justify-between gap-3 mb-4">
+                            <div>
+                                <h2 className="font-bold uppercase tracking-wider text-gray-400">Past Races</h2>
+                                {data.seasonMeta?.oldestSeason && (
+                                    <span className="text-[9px] uppercase tracking-widest text-gray-600">
+                                        OpenF1 archive from {data.seasonMeta.oldestSeason}
+                                    </span>
+                                )}
+                            </div>
+
+                            <select
+                                value={selectedSeason ?? ''}
+                                onChange={event => changeSeason(Number(event.target.value))}
+                                disabled={seasonLoading}
+                                className="bg-gray-950 border border-gray-700 rounded-md px-3 py-2 text-xs font-bold text-gray-200 outline-none focus:border-blue-500 disabled:opacity-50"
+                                aria-label="Select Formula 1 season"
+                            >
+                                {(data.seasonMeta?.availableSeasons || []).map((year: number) => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
+
                     <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5">
-                        <Table data={data.pastRaces} columns={pastRaceColumns} />
+                        {seasonLoading ? (
+                            <div className="py-10 text-center text-xs uppercase tracking-widest font-bold text-gray-500 animate-pulse">
+                                Loading {selectedSeason} season…
+                            </div>
+                        ) : seasonError ? (
+                            <div className="py-6 text-center text-xs text-red-400">{seasonError}</div>
+                        ) : seasonRaces.length > 0 ? (
+                            <Table data={seasonRaces} columns={pastRaceColumns} />
+                        ) : (
+                            <div className="py-10 text-center text-xs uppercase tracking-widest font-bold text-gray-600">
+                                No completed races available for {selectedSeason}
+                            </div>
+                        )}
                     </div>
                 </div>
 
