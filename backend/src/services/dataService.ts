@@ -99,6 +99,123 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
     return requestPromise;
 };
 
+const F1_LIVETIMING_STATIC = 'https://livetiming.formula1.com/static';
+
+const parseLapCountPayload = (payload: any): number | null => {
+    const total = Number(payload?.TotalLaps ?? payload?.totalLaps ?? payload?.total_laps);
+    return Number.isFinite(total) && total > 0 ? total : null;
+};
+
+const parseLapCountStream = (raw: any): number | null => {
+    if (typeof raw !== 'string') return null;
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index--) {
+        const line = lines[index];
+        const jsonStart = line.indexOf('{');
+        if (jsonStart < 0) continue;
+        try {
+            const value = parseLapCountPayload(JSON.parse(line.slice(jsonStart)));
+            if (value) return value;
+        } catch {
+            // Ignore malformed/partial stream lines and continue backwards.
+        }
+    }
+    return null;
+};
+
+export const getScheduledTotalLaps = async (sessionInfo: any): Promise<number | null> => {
+    const direct = Number(
+        sessionInfo?.total_laps
+        ?? sessionInfo?.totalLaps
+        ?? sessionInfo?.number_of_laps
+        ?? sessionInfo?.NumberOfLaps
+    );
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const sessionType = String(sessionInfo?.session_type || sessionInfo?.session_name || '').toLowerCase();
+    if (!sessionType.includes('race') && !sessionType.includes('sprint')) return null;
+
+    const sessionKey = Number(sessionInfo?.session_key);
+    const year = Number(sessionInfo?.year)
+        || (sessionInfo?.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : NaN);
+    if (!Number.isFinite(year)) return null;
+
+    try {
+        const seasonIndexRes = await getCached(
+            `f1_livetiming_index_${year}`,
+            600000,
+            () => axios.get(`${F1_LIVETIMING_STATIC}/${year}/Index.json`, {
+                headers: { 'User-Agent': 'F1-Dash/1.0' }
+            })
+        );
+
+        const meetings = seasonIndexRes?.data?.Meetings || [];
+        const sessions = meetings.flatMap((meeting: any) =>
+            (meeting.Sessions || []).map((session: any) => ({ ...session, __meeting: meeting }))
+        );
+
+        let liveTimingSession = sessions.find((session: any) =>
+            Number.isFinite(sessionKey) && Number(session.Key) === sessionKey
+        );
+
+        if (!liveTimingSession) {
+            const targetStart = sessionInfo?.date_start ? new Date(sessionInfo.date_start).getTime() : NaN;
+            const targetName = String(sessionInfo?.session_name || sessionInfo?.session_type || '').toLowerCase();
+            liveTimingSession = sessions.find((session: any) => {
+                const name = String(session.Name || session.Type || '').toLowerCase();
+                const start = session.StartDate ? new Date(session.StartDate).getTime() : NaN;
+                return name === targetName
+                    && (!Number.isFinite(targetStart) || !Number.isFinite(start) || Math.abs(start - targetStart) < 6 * 60 * 60 * 1000);
+            });
+        }
+
+        if (!liveTimingSession?.Path) return null;
+
+        const path = String(liveTimingSession.Path).replace(/^\/+/, '');
+        const sessionBase = liveTimingSession.Path.startsWith('http')
+            ? String(liveTimingSession.Path).replace(/\/$/, '')
+            : `${F1_LIVETIMING_STATIC}/${path.replace(/\/$/, '')}`;
+
+        const sessionIndexRes = await getCached(
+            `f1_livetiming_session_index_${year}_${sessionKey || path}`,
+            600000,
+            () => axios.get(`${sessionBase}/Index.json`, {
+                headers: { 'User-Agent': 'F1-Dash/1.0' }
+            })
+        );
+
+        const lapCountFeed = sessionIndexRes?.data?.Feeds?.LapCount || {};
+        const keyFramePath = lapCountFeed.KeyFramePath || 'LapCount.json';
+
+        try {
+            const keyFrameRes = await getCached(
+                `f1_lap_count_${year}_${sessionKey || path}`,
+                30000,
+                () => axios.get(`${sessionBase}/${keyFramePath}`, {
+                    headers: { 'User-Agent': 'F1-Dash/1.0' }
+                })
+            );
+            const total = parseLapCountPayload(keyFrameRes?.data);
+            if (total) return total;
+        } catch {
+            // Some sessions expose only the stream while the keyframe is unavailable.
+        }
+
+        const streamPath = lapCountFeed.StreamPath;
+        if (streamPath) {
+            const streamRes = await axios.get(`${sessionBase}/${streamPath}`, {
+                headers: { 'User-Agent': 'F1-Dash/1.0' },
+                responseType: 'text'
+            });
+            return parseLapCountStream(streamRes.data);
+        }
+    } catch (error: any) {
+        console.warn('⚠️ Unable to resolve scheduled race laps from F1 LiveTiming:', error?.message || error);
+    }
+
+    return null;
+};
+
 const formatGap = (gap: any) => {
     if (gap === null || gap === undefined || gap === '') return '-';
     if (typeof gap === 'string' && gap.toUpperCase().includes('LAP')) return gap;
@@ -377,6 +494,10 @@ export const getRaceDetails = async (sessionKey: string) => {
         }
     }
 
+    const scheduledTotalLaps = isRace
+        ? await getScheduledTotalLaps(sessionInfo)
+        : null;
+
     const sessionYear = Number(sessionInfo.year)
         || (sessionInfo.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : new Date().getUTCFullYear());
     const seasonSessionsRes = await getCached(
@@ -449,6 +570,7 @@ export const getRaceDetails = async (sessionKey: string) => {
             championshipDrivers: championshipDriversRes.data || [],
             championshipTeams: championshipTeamsRes.data || [],
             remainingChampionshipPoints,
+            scheduledTotalLaps,
             isRace
         })
     };
