@@ -215,6 +215,7 @@ export const DriverProfile = () => {
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
     const activeData = isLive ? liveData : histPayload;
+    const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
