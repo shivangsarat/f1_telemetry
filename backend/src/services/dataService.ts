@@ -356,6 +356,65 @@ const buildTyreHistory = (
     return { stints, pitStops: matchedPitStops };
 };
 
+const mapSeasonRaceCalendar = (meetings: any[] = [], sessions: any[] = [], year: number) =>
+    meetings.map((meeting: any) => {
+        const race = sessions.find((session: any) => session.meeting_key === meeting.meeting_key);
+        return race ? {
+            round: meeting.meeting_name,
+            location: meeting.location,
+            date: race.date_start || meeting.date_start,
+            session_key: race.session_key,
+            meeting_key: meeting.meeting_key,
+            year
+        } : null;
+    }).filter(Boolean);
+
+export const getAvailableSeasons = async () => {
+    const currentYear = new Date().getFullYear();
+    const sessionsRes = await getCached(
+        'openf1_available_seasons',
+        86400000,
+        () => openF1Request(`${OPENF1_BASE}/sessions?year>=0`)
+    );
+
+    const availableSeasons = [...new Set(
+        (sessionsRes?.data || [])
+            .map((session: any) => Number(session.year))
+            .filter((year: number) => Number.isInteger(year) && year > 0 && year <= currentYear)
+    )].sort((a, b) => b - a);
+
+    return {
+        currentSeason: currentYear,
+        oldestSeason: availableSeasons.length ? Math.min(...availableSeasons) : currentYear,
+        availableSeasons: availableSeasons.length ? availableSeasons : [currentYear]
+    };
+};
+
+export const getSeasonRaces = async (year: number) => {
+    const currentYear = new Date().getFullYear();
+    if (!Number.isInteger(year) || year < 1900 || year > currentYear) {
+        return [];
+    }
+
+    const [meetingsRes, sessionsRes] = await Promise.all([
+        getCached(
+            `meetings_${year}`,
+            600000,
+            () => openF1Request(`${OPENF1_BASE}/meetings?year=${year}`)
+        ),
+        getCached(
+            `sessions_race_${year}`,
+            600000,
+            () => openF1Request(`${OPENF1_BASE}/sessions?year=${year}&session_name=Race`)
+        )
+    ]);
+
+    const now = Date.now();
+    return mapSeasonRaceCalendar(meetingsRes?.data || [], sessionsRes?.data || [], year)
+        .filter((race: any) => new Date(race.date).getTime() <= now)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+};
+
 export const getHomeData = async () => {
     const currentYear = new Date().getFullYear();
 
@@ -402,20 +461,8 @@ export const getHomeData = async () => {
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
-    const mapCalendar = (meetings: any[] = [], sessions: any[] = [], year: number) =>
-        meetings.map((m: any) => {
-            const race = sessions.find((s: any) => s.meeting_key === m.meeting_key);
-            return race ? {
-                round: m.meeting_name,
-                location: m.location,
-                date: race.date_start || m.date_start,
-                session_key: race.session_key,
-                year
-            } : null;
-        }).filter(Boolean);
-
-    const races = mapCalendar(meetingsRes?.data || [], sessionsRes?.data || [], currentYear);
-    const nextYearRaces = mapCalendar(nextYearMeetingsRes?.data || [], nextYearSessionsRes?.data || [], currentYear + 1)
+    const races = mapSeasonRaceCalendar(meetingsRes?.data || [], sessionsRes?.data || [], currentYear);
+    const nextYearRaces = mapSeasonRaceCalendar(nextYearMeetingsRes?.data || [], nextYearSessionsRes?.data || [], currentYear + 1)
         .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const now = Date.now();
@@ -432,7 +479,9 @@ export const getHomeData = async () => {
         liveStatus = { isLive: now >= new Date(s.date_start).getTime() && (isNaN(end) || now <= end), session_key: s.session_key, type: s.session_name };
     }
 
-    return { drivers, teams, pastRaces, upcomingRaces, nextYearRaces, liveStatus };
+    const seasonMeta = await getAvailableSeasons();
+
+    return { drivers, teams, pastRaces, upcomingRaces, nextYearRaces, liveStatus, seasonMeta };
 };
 
 export const getRaceDetails = async (sessionKey: string) => {
