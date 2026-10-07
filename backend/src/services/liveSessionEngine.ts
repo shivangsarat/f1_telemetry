@@ -59,6 +59,7 @@ export class LiveSessionEngine {
     private trackTrace: any[] = [];
     private championshipContext: any = null;
     private trackMeta: any = null;
+    private scheduledTotalLaps: number | null = null;
     private readonly maps = new Map<string, Map<string, any>>();
 
     hydrate(calculated: any, sessionKey?: string | number | null) {
@@ -71,6 +72,10 @@ export class LiveSessionEngine {
         this.state.championshipDrivers = calculated.championshipDrivers || this.state.championshipDrivers;
         this.state.championshipTeams = calculated.championshipTeams || this.state.championshipTeams;
         this.championshipContext = calculated.championshipMeta || this.championshipContext;
+        const hydratedScheduledLaps = Number(calculated.scheduledTotalLaps);
+        if (Number.isFinite(hydratedScheduledLaps) && hydratedScheduledLaps > 0) {
+            this.scheduledTotalLaps = hydratedScheduledLaps;
+        }
         this.trackMeta = {
             meetingInfo: calculated.meetingInfo || null,
             circuitInfo: calculated.circuitInfo || null
@@ -108,6 +113,7 @@ export class LiveSessionEngine {
 
     ingest(topic: string, data: any) {
         const rows = Array.isArray(data) ? data : [data];
+        const batchedCarDrivers = new Set<number>();
 
         for (const row of rows) {
             if (!row || typeof row !== 'object') continue;
@@ -125,12 +131,20 @@ export class LiveSessionEngine {
             }
 
             if (topic === 'car_data') {
-                this.ingestCarData(row);
+                const driverNumber = Number(row.driver_number);
+                this.ingestCarData(row, !Array.isArray(data));
+                if (Array.isArray(data) && Number.isFinite(driverNumber)) batchedCarDrivers.add(driverNumber);
                 continue;
             }
 
             if (topic === 'location') {
                 this.ingestLocation(row);
+                continue;
+            }
+
+            if (topic === 'lap_count') {
+                const total = Number(row.TotalLaps ?? row.totalLaps ?? row.total_laps);
+                if (Number.isFinite(total) && total > 0) this.scheduledTotalLaps = total;
                 continue;
             }
 
@@ -149,6 +163,10 @@ export class LiveSessionEngine {
                 map.set(keyFor(topic, row), row);
                 this.syncCollection(topic);
             }
+        }
+
+        if (topic === 'car_data' && Array.isArray(data)) {
+            for (const driverNumber of batchedCarDrivers) this.emitLatestTelemetry(driverNumber);
         }
 
         if (topic === 'location') this.scheduleTrackerEmit();
@@ -187,6 +205,7 @@ export class LiveSessionEngine {
         this.trackTrace = [];
         this.championshipContext = null;
         this.trackMeta = null;
+        this.scheduledTotalLaps = null;
         this.bootstrapSnapshot = null;
     }
 
@@ -206,6 +225,16 @@ export class LiveSessionEngine {
     }
 
     private upsertRaceControl(row: any) {
+        const message = String(row?.message || row?.text || '');
+        const revisedLapMatch =
+            message.match(/RACE\s+WILL\s+BE\s+(\d{1,3})\s+LAPS?/i)
+            || message.match(/RACE\s+DISTANCE[^0-9]*(\d{1,3})\s+LAPS?/i)
+            || message.match(/TOTAL\s+LAPS?[^0-9]*(\d{1,3})/i);
+        if (revisedLapMatch) {
+            const total = Number(revisedLapMatch[1]);
+            if (Number.isFinite(total) && total > 0) this.scheduledTotalLaps = total;
+        }
+
         const key = keyFor('race_control', row);
         const without = this.state.raceControl.filter(x => keyFor('race_control', x) !== key);
         this.state.raceControl = [row, ...without]
@@ -213,7 +242,7 @@ export class LiveSessionEngine {
             .slice(0, 300);
     }
 
-    private ingestCarData(row: any) {
+    private ingestCarData(row: any, emit = true) {
         const dNum = Number(row.driver_number);
         if (!Number.isFinite(dNum)) return;
         const history = this.carData.get(dNum) || [];
@@ -228,21 +257,24 @@ export class LiveSessionEngine {
         if (history.length > 30_000) history.splice(0, history.length - 30_000);
         this.carData.set(dNum, history);
 
+        if (emit) this.emitLatestTelemetry(dNum);
+    }
+
+    private emitLatestTelemetry(dNum: number) {
         const listeners = this.driverListeners.get(dNum);
-        if (listeners?.size) {
-            // Use recent history rather than only the newest row so derived values
-            // such as longitudinal G can be calculated from change over time.
-            const locations = this.locationHistory.get(dNum) || [];
-            const telemetry = buildTelemetryHistory(history.slice(-12), this.state.laps, locations.slice(-24));
-            const point = telemetry[telemetry.length - 1];
-            if (point) {
-                for (const listener of listeners) listener({
-                    type: 'LIVE_TELEMETRY_POINT',
-                    driver: dNum,
-                    data: point
-                });
-            }
-        }
+        if (!listeners?.size) return;
+
+        const history = this.carData.get(dNum) || [];
+        const locations = this.locationHistory.get(dNum) || [];
+        const telemetry = buildTelemetryHistory(history.slice(-12), this.state.laps, locations.slice(-24));
+        const point = telemetry[telemetry.length - 1];
+        if (!point) return;
+
+        for (const listener of listeners) listener({
+            type: 'LIVE_TELEMETRY_POINT',
+            driver: dNum,
+            data: point
+        });
     }
 
     private ingestLocation(row: any) {
@@ -315,6 +347,14 @@ export class LiveSessionEngine {
         };
     }
 
+    setScheduledTotalLaps(totalLaps: number | null | undefined) {
+        const total = Number(totalLaps);
+        if (!Number.isFinite(total) || total <= 0) return;
+        if (this.scheduledTotalLaps === total) return;
+        this.scheduledTotalLaps = total;
+        this.scheduleEmit();
+    }
+
     private scheduleTrackerEmit() {
         if (this.trackerScheduled) return;
         this.trackerScheduled = true;
@@ -369,6 +409,7 @@ export class LiveSessionEngine {
             championshipTeams: this.state.championshipTeams,
             sessionResults: this.state.sessionResults,
             remainingChampionshipPoints: this.championshipContext?.remainingChampionshipPoints,
+            scheduledTotalLaps: this.scheduledTotalLaps,
             sessionFinished: this.state.raceControl.some(message => String(message.flag || '').toUpperCase() === 'CHEQUERED')
         });
 

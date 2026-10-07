@@ -6,10 +6,13 @@ type LiveRaceData = {
     sessionBests: any;
     isRace: boolean;
     maxRaceLap: number;
+    scheduledTotalLaps?: number | null;
     raceControl: any[];
     availableSessions: any[];
     sessionName?: string;
     sessionInfo?: any;
+    meetingInfo?: any;
+    circuitInfo?: any;
     tracker?: {
         trace: any[];
         cars: any[];
@@ -24,7 +27,7 @@ type LiveRaceData = {
 };
 
 type DriverLiveData = {
-    driver: any;
+    driver?: any;
     telemetry: any[];
     laps: any[];
     stints: any[];
@@ -34,9 +37,30 @@ interface RaceState {
     connected: boolean;
     liveRace: LiveRaceData | null;
     driverLive: Record<number, DriverLiveData>;
+
+    // Historical data is immutable once a session has finished, so keep it in
+    // memory for the lifetime of the SPA. Route changes should not force the
+    // browser to download and recalculate the same session again.
+    historicalRaces: Record<string, any>;
+    historicalDrivers: Record<string, DriverLiveData>;
+
+    // Preserve the home/season view as well so the app can return from a race
+    // without flashing through a full reload. Home data may still be refreshed
+    // in the background after its short TTL.
+    homeData: any | null;
+    homeDataUpdatedAt: number;
+    selectedSeason: number | null;
+    seasonRaces: Record<number, any[]>;
+
     connect: () => void;
     subscribeToDriver: (driverNumber: number) => void;
     unsubscribeFromDriver: (driverNumber: number) => void;
+
+    cacheHistoricalRace: (sessionKey: string, data: any) => void;
+    cacheHistoricalDriver: (sessionKey: string, driverNumber: number, data: DriverLiveData) => void;
+    cacheHomeData: (data: any) => void;
+    setSelectedSeason: (year: number) => void;
+    cacheSeasonRaces: (year: number, races: any[]) => void;
 }
 
 let ws: WebSocket | null = null;
@@ -48,6 +72,12 @@ export const useRaceStore = create<RaceState>((set) => ({
     connected: false,
     liveRace: null,
     driverLive: {},
+    historicalRaces: {},
+    historicalDrivers: {},
+    homeData: null,
+    homeDataUpdatedAt: 0,
+    selectedSeason: null,
+    seasonRaces: {},
 
     connect: () => {
         if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
@@ -73,11 +103,30 @@ export const useRaceStore = create<RaceState>((set) => ({
                             sessionBests: msg.data.sessionBests || null,
                             isRace: Boolean(msg.data.isRace),
                             maxRaceLap: Number(msg.data.maxRaceLap || 0),
+                            scheduledTotalLaps: Number(msg.data.scheduledTotalLaps || 0) || null,
                             raceControl: msg.data.raceControl || [],
                             availableSessions: msg.data.availableSessions || [],
                             sessionName: msg.data.sessionName,
                             sessionInfo: msg.data.sessionInfo,
-                            tracker: msg.data.tracker || { trace: [], cars: [] }
+                            meetingInfo: msg.data.meetingInfo,
+                            circuitInfo: msg.data.circuitInfo,
+                            tracker: (() => {
+                                const incoming = msg.data.tracker;
+                                const previous = useRaceStore.getState().liveRace?.tracker;
+                                if (!incoming) return previous || { trace: [], cars: [] };
+
+                                const incomingCars = incoming.cars || [];
+                                const incomingTrace = incoming.trace || [];
+
+                                return {
+                                    ...incoming,
+                                    // Never throw away the most recent known driver coordinates
+                                    // just because a later snapshot has no fresh location rows.
+                                    cars: incomingCars.length > 0 ? incomingCars : (previous?.cars || []),
+                                    trace: incomingTrace.length > 0 ? incomingTrace : (previous?.trace || []),
+                                    circuit: incoming.circuit || previous?.circuit
+                                };
+                            })()
                         }
                     });
                 }
@@ -140,5 +189,42 @@ export const useRaceStore = create<RaceState>((set) => ({
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'UNSUBSCRIBE_DRIVER', driver: driverNumber }));
         }
+    },
+
+    cacheHistoricalRace: (sessionKey: string, data: any) => {
+        set(state => ({
+            historicalRaces: {
+                ...state.historicalRaces,
+                [String(sessionKey)]: data
+            }
+        }));
+    },
+
+    cacheHistoricalDriver: (sessionKey: string, driverNumber: number, data: DriverLiveData) => {
+        const key = `${sessionKey}:${driverNumber}`;
+        set(state => ({
+            historicalDrivers: {
+                ...state.historicalDrivers,
+                [key]: data
+            }
+        }));
+    },
+
+    cacheHomeData: (data: any) => {
+        set({
+            homeData: data,
+            homeDataUpdatedAt: Date.now()
+        });
+    },
+
+    setSelectedSeason: (year: number) => set({ selectedSeason: year }),
+
+    cacheSeasonRaces: (year: number, races: any[]) => {
+        set(state => ({
+            seasonRaces: {
+                ...state.seasonRaces,
+                [year]: races
+            }
+        }));
     }
 }));
