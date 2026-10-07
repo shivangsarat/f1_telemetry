@@ -77,7 +77,23 @@ export const useRaceStore = create<RaceState>((set) => ({
                             availableSessions: msg.data.availableSessions || [],
                             sessionName: msg.data.sessionName,
                             sessionInfo: msg.data.sessionInfo,
-                            tracker: msg.data.tracker || { trace: [], cars: [] }
+                            tracker: (() => {
+                                const incoming = msg.data.tracker;
+                                const previous = useRaceStore.getState().liveRace?.tracker;
+                                if (!incoming) return previous || { trace: [], cars: [] };
+
+                                const incomingCars = incoming.cars || [];
+                                const incomingTrace = incoming.trace || [];
+
+                                return {
+                                    ...incoming,
+                                    // Never throw away the most recent known driver coordinates
+                                    // just because a later snapshot has no fresh location rows.
+                                    cars: incomingCars.length > 0 ? incomingCars : (previous?.cars || []),
+                                    trace: incomingTrace.length > 0 ? incomingTrace : (previous?.trace || []),
+                                    circuit: incoming.circuit || previous?.circuit
+                                };
+                            })()
                         }
                     });
                 }
