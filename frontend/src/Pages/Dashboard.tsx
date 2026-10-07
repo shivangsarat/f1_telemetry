@@ -20,6 +20,7 @@ export const Dashboard = () => {
     const [latestToast, setLatestToast] = useState<any>(null);
     const [showScrollTop, setShowScrollTop] = useState(false);
     const [scrollTopDismissed, setScrollTopDismissed] = useState(false);
+    const [sessionClockNow, setSessionClockNow] = useState(() => Date.now());
     const resultsScrollRef = useRef<HTMLDivElement>(null);
     const raceControlBaselineReadyRef = useRef(false);
     const lastRaceControlKeyRef = useRef<string | null>(null);
@@ -56,6 +57,27 @@ export const Dashboard = () => {
     const displayedRaceLaps = scheduledTotalLaps > 0 ? scheduledTotalLaps : activeMaxLap;
     const activeRaceControl = isLiveSession ? (liveRace?.raceControl || []) : histRaceControl;
     const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
+    const activeSessionInfo = isLiveSession ? liveRace?.sessionInfo : histData.sessionInfo;
+
+    const sessionStartMs = activeSessionInfo?.date_start ? new Date(activeSessionInfo.date_start).getTime() : NaN;
+    const sessionEndMs = activeSessionInfo?.date_end ? new Date(activeSessionInfo.date_end).getTime() : NaN;
+    const scheduledSessionDurationMs = Number.isFinite(sessionStartMs) && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionStartMs)
+        : 0;
+    const remainingSessionMs = isLiveSession && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionClockNow)
+        : scheduledSessionDurationMs;
+    const formatSessionClock = (durationMs: number) => {
+        if (!Number.isFinite(durationMs) || durationMs <= 0) return '--:--';
+        const totalSeconds = Math.max(0, Math.ceil(durationMs / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return hours > 0
+            ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+            : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    };
+    const displayedSessionClock = formatSessionClock(remainingSessionMs);
 
     const raceControlEventKey = (message: any) =>
         String(
@@ -100,6 +122,13 @@ export const Dashboard = () => {
         const timer = setTimeout(() => setLatestToast(null), 10000);
         return () => clearTimeout(timer);
     }, [latestToast]);
+
+    useEffect(() => {
+        if (isRaceMode || !isLiveSession) return;
+        setSessionClockNow(Date.now());
+        const timer = window.setInterval(() => setSessionClockNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [isRaceMode, isLiveSession, activeSessionInfo?.session_key, activeSessionInfo?.date_end]);
 
     const updateScrollTopVisibility = () => {
         const tableScrollTop = resultsScrollRef.current?.scrollTop || 0;
@@ -237,14 +266,27 @@ export const Dashboard = () => {
                                 Live Tracker
                             </Link>
                         )}
-                    {isRaceMode && displayedRaceLaps > 0 && (
+                    {isRaceMode ? (
+                        displayedRaceLaps > 0 && (
+                            <div
+                                className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
+                                title={scheduledTotalLaps > 0 ? 'Scheduled race distance' : 'Scheduled distance unavailable; showing laps observed so far'}
+                            >
+                                <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
+                                <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Race Laps</span>
+                                <span className="font-black text-white font-mono text-sm">{displayedRaceLaps}</span>
+                            </div>
+                        )
+                    ) : (
                         <div
                             className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
-                            title={scheduledTotalLaps > 0 ? 'Scheduled race distance' : 'Scheduled distance unavailable; showing laps observed so far'}
+                            title={isLiveSession ? 'Estimated session time remaining' : 'Scheduled session duration'}
                         >
                             <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
-                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Race Laps</span>
-                            <span className="font-black text-white font-mono text-sm">{displayedRaceLaps}</span>
+                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">
+                                {isLiveSession ? 'Session Time' : 'Session Duration'}
+                            </span>
+                            <span className="font-black text-white font-mono text-sm tabular-nums">{displayedSessionClock}</span>
                         </div>
                     )}
                     </div>
