@@ -636,6 +636,15 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
     );
 };
 
+const formatChartLapTime = (seconds: number | null | undefined) => {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return '--:--.----';
+
+    const minutes = Math.floor(value / 60);
+    const remainingSeconds = value - (minutes * 60);
+    return `${minutes}:${remainingSeconds.toFixed(4).padStart(7, '0')}`;
+};
+
 export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeResults: any[]; maxRaceLap: number }) => {
     const chartRef = useRef<HTMLDivElement>(null);
     const plotRef = useRef<uPlot | null>(null);
@@ -664,7 +673,7 @@ export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeR
                 width: 2,
                 points: { show: false },
                 spanGaps: false,
-                value: (_u, value) => value == null ? '--' : `${Number(value).toFixed(3)}s`
+                value: (_u, value) => value == null ? '--' : formatChartLapTime(Number(value))
             });
         });
 
@@ -676,7 +685,13 @@ export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeR
             cursor: { x: true, y: true },
             axes: [
                 { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP' },
-                { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP TIME (s)' }
+                {
+                    stroke: '#64748b',
+                    grid: { stroke: '#334155', width: 1 },
+                    label: 'LAP TIME',
+                    size: 112,
+                    values: (_u, values) => values.map(value => formatChartLapTime(Number(value)))
+                }
             ],
             series,
             scales: { x: { time: false }, y: { auto: true } }
