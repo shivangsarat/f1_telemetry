@@ -104,25 +104,6 @@ export const RaceControlWidget = React.memo(({
     );
 });
 
-// --- HELPER: Mid-lap progression for smooth timeline animation ---
-const calculatePartialLapProgress = (driver: any) => {
-    if (driver.status === 'Finished' || driver.status === 'DNF' || driver.status?.toUpperCase().includes('OUT') || driver.status === 'Retired') return 0;
-    let fraction = 0;
-    const seg1 = driver.segments_sector_1 || driver.seg1;
-    const seg2 = driver.segments_sector_2 || driver.seg2;
-    const seg3 = driver.segments_sector_3 || driver.seg3;
-
-    if (seg3 && seg3.length > 0) fraction = 0.66 + (Math.min(seg3.length, 10) / 10) * 0.33;
-    else if (seg2 && seg2.length > 0) fraction = 0.33 + (Math.min(seg2.length, 10) / 10) * 0.33;
-    else if (seg1 && seg1.length > 0) fraction = (Math.min(seg1.length, 10) / 10) * 0.33;
-    else {
-        if (driver.s2) fraction = 0.66;
-        else if (driver.s1) fraction = 0.33;
-        else fraction = 0.05; 
-    }
-    return Math.min(fraction, 0.99); 
-};
-
 // // --- HELPER: Clean interval strings ---
 // const getIntervalStr = (d: any) => {
 //     let val = d.interval ? String(d.interval) : (d.gap_to_leader ? String(d.gap_to_leader) : '0.000s');
@@ -135,7 +116,7 @@ const calculatePartialLapProgress = (driver: any) => {
 
 
 // --- COMPONENT: Championship Points Widget (Replaces Live Battles) ---
-export const DriverChampionshipWidget = ({ driver, liveStandings }: { driver: any, liveStandings?: any }) => {
+export const DriverChampionshipWidget = ({ driver, liveStandings: _liveStandings }: { driver: any, liveStandings?: any }) => {
     const pointsBefore = driver.championship?.pointsStart ?? 0;
     // Backend uses posStart; keep position as a legacy fallback for older payloads.
     const rawPosStart = driver.championship?.posStart ?? driver.championship?.position;
@@ -477,6 +458,14 @@ export const PitHistoryWidget = ({ driver }: { driver: any }) => {
     );
 };
 
+const getTeamVariant = (driver: any, drivers: any[]) => {
+    const teamKey = String(driver?.team_name || driver?.team || driver?.team_color || '').toLowerCase();
+    const teammates = drivers
+        .filter(item => String(item?.team_name || item?.team || item?.team_color || '').toLowerCase() === teamKey)
+        .sort((a, b) => Number(a.driver_number) - Number(b.driver_number));
+    return Math.max(0, teammates.findIndex(item => Number(item.driver_number) === Number(driver.driver_number)));
+};
+
 export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRaceLap }: { activeResults: any[], currentDriverNumber: number, maxRaceLap: number }) => {
     const chartRef = useRef<HTMLDivElement>(null);
     const plotInstance = useRef<uPlot | null>(null);
@@ -533,15 +522,17 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
             });
             seriesData.push(yData);
 
-            const isCurrent = driver.driver_number === currentDriverNumber;
+            const isCurrent = Number(driver.driver_number) === Number(currentDriverNumber);
+            const teamVariant = getTeamVariant(driver, activeResults);
             seriesConfig.push({
                 show: !hiddenDrivers.has(driver.driver_number), 
                 label: driver.name || String(driver.driver_number),
                 stroke: `#${driver.team_color || 'ffffff'}`,
                 width: isCurrent ? 3 : 1.5,
+                dash: teamVariant % 2 === 1 ? [8, 5] : undefined,
                 points: { show: true, size: isCurrent ? 5 : 3.5, fill: `#${driver.team_color || 'ffffff'}` },
                 spanGaps: true,
-                value: (u, v) => v == null ? '--' : `P${v}`
+                value: (_u, v) => v == null ? '--' : `P${v}`
             });
         });
 
@@ -563,7 +554,7 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
                     space: 40,
                     label: "POSITION",
                     labelSize: 30,
-                    values: (u, vals) => vals.map(v => v == null ? '' : `P${v}`)
+                    values: (_u, vals) => vals.map(v => v == null ? '' : `P${v}`)
                 }
             ],
             series: seriesConfig,
@@ -616,7 +607,16 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
                                 </div>
                                 <div className="flex justify-between p-2 border-b border-gray-700 bg-gray-900/50">
                                     <button onClick={() => setHiddenDrivers(new Set())} className="text-[10px] uppercase tracking-widest text-blue-400 hover:text-blue-300 font-bold transition-colors">Select All</button>
-                                    <button onClick={() => setHiddenDrivers(new Set(activeResults.map(d => d.driver_number)))} className="text-[10px] uppercase tracking-widest text-red-400 hover:text-red-300 font-bold transition-colors">Deselect All</button>
+                                    <button
+                                        onClick={() => setHiddenDrivers(new Set(
+                                            activeResults
+                                                .map(d => Number(d.driver_number))
+                                                .filter(dNum => dNum !== Number(currentDriverNumber))
+                                        ))}
+                                        className="text-[10px] uppercase tracking-widest text-red-400 hover:text-red-300 font-bold transition-colors"
+                                    >
+                                        Deselect All
+                                    </button>
                                 </div>
                                 <div className="overflow-y-auto custom-scrollbar p-1.5 flex-1">
                                     {filteredDrivers.map(driver => {
@@ -633,7 +633,15 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
                                                     readOnly
                                                     className="w-3.5 h-3.5 accent-blue-500 cursor-pointer rounded-sm"
                                                 />
-                                                <div className="w-2.5 h-2.5 rounded-sm border border-gray-900" style={{ backgroundColor: `#${driver.team_color}` }}></div>
+                                                <div className="w-5 h-2 flex items-center">
+                                                    <span
+                                                        className="w-full border-t-2"
+                                                        style={{
+                                                            borderColor: `#${driver.team_color}`,
+                                                            borderTopStyle: getTeamVariant(driver, activeResults) % 2 === 1 ? 'dashed' : 'solid'
+                                                        }}
+                                                    />
+                                                </div>
                                                 <span className="text-xs text-gray-200 font-bold uppercase tracking-wider">{driver.name}</span>
                                                 <span className="text-[10px] font-mono text-gray-500 ml-auto font-bold">#{driver.driver_number}</span>
                                             </div>
@@ -655,10 +663,49 @@ export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRac
     );
 };
 
-export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeResults: any[]; maxRaceLap: number }) => {
+const formatChartLapTime = (seconds: number | null | undefined) => {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return '--:--.----';
+
+    const minutes = Math.floor(value / 60);
+    const remainingSeconds = value - (minutes * 60);
+    return `${minutes}:${remainingSeconds.toFixed(4).padStart(7, '0')}`;
+};
+
+export const AllDriversLapTimesChart = ({
+    activeResults,
+    currentDriverNumber,
+    maxRaceLap
+}: {
+    activeResults: any[];
+    currentDriverNumber: number;
+    maxRaceLap: number;
+}) => {
     const chartRef = useRef<HTMLDivElement>(null);
     const plotRef = useRef<uPlot | null>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
     const [hiddenDrivers, setHiddenDrivers] = useState<Set<number>>(new Set());
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+
+    const toggleDriver = (dNum: number) => {
+        setHiddenDrivers(previous => {
+            const next = new Set(previous);
+            if (next.has(dNum)) next.delete(dNum);
+            else next.add(dNum);
+            return next;
+        });
+    };
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     useLayoutEffect(() => {
         if (!chartRef.current || !activeResults?.length) return;
@@ -675,15 +722,18 @@ export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeR
         const series: uPlot.Series[] = [{ label: 'Lap' }];
 
         visibleResults.forEach(driver => {
-            const byLap = new Map((driver.lapsHistory || []).map((lap: any) => [Number(lap.lap_number), Number(lap.lap_duration)]));
+            const byLap = new Map<number, number>((driver.lapsHistory || []).map((lap: any) => [Number(lap.lap_number), Number(lap.lap_duration)]));
             data.push(x.map(lap => byLap.get(lap) ?? null));
+            const isCurrent = Number(driver.driver_number) === Number(currentDriverNumber);
+            const teamVariant = getTeamVariant(driver, activeResults);
             series.push({
                 label: driver.name || String(driver.driver_number),
                 stroke: `#${driver.team_color || 'ffffff'}`,
-                width: 2,
+                width: isCurrent ? 3 : 2,
+                dash: teamVariant % 2 === 1 ? [8, 5] : undefined,
                 points: { show: false },
                 spanGaps: false,
-                value: (_u, value) => value == null ? '--' : `${Number(value).toFixed(3)}s`
+                value: (_u, value) => value == null ? '--' : formatChartLapTime(Number(value))
             });
         });
 
@@ -695,7 +745,13 @@ export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeR
             cursor: { x: true, y: true },
             axes: [
                 { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP' },
-                { stroke: '#64748b', grid: { stroke: '#334155', width: 1 }, label: 'LAP TIME (s)' }
+                {
+                    stroke: '#64748b',
+                    grid: { stroke: '#334155', width: 1 },
+                    label: 'LAP TIME',
+                    size: 112,
+                    values: (_u, values) => values.map(value => formatChartLapTime(Number(value)))
+                }
             ],
             series,
             scales: { x: { time: false }, y: { auto: true } }
@@ -705,30 +761,99 @@ export const AllDriversLapTimesChart = ({ activeResults, maxRaceLap }: { activeR
             plotRef.current?.destroy();
             plotRef.current = null;
         };
-    }, [activeResults, maxRaceLap, hiddenDrivers]);
+    }, [activeResults, currentDriverNumber, maxRaceLap, hiddenDrivers]);
+
+    const filteredDrivers = activeResults.filter(driver =>
+        (driver.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+        || String(driver.driver_number).includes(searchQuery)
+    );
 
     return (
         <div className="w-full bg-gray-900 p-5 rounded-xl border border-gray-800">
-            <div className="flex items-center justify-between mb-3 border-b border-gray-700/60 pb-2">
+            <div className="flex items-center justify-between mb-3 border-b border-gray-700/60 pb-2 relative z-20">
                 <span className="text-gray-300 font-bold uppercase tracking-widest text-sm">LAP TIMES — ALL DRIVERS</span>
-                <div className="flex flex-wrap justify-end gap-1.5 max-w-[75%]">
-                    {activeResults.map(driver => {
-                        const driverNumber = Number(driver.driver_number);
-                        const hidden = hiddenDrivers.has(driverNumber);
-                        return (
-                            <button
-                                key={driverNumber}
-                                onClick={() => setHiddenDrivers(previous => {
-                                    const next = new Set(previous);
-                                    hidden ? next.delete(driverNumber) : next.add(driverNumber);
-                                    return next;
-                                })}
-                                className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider border transition ${hidden ? 'text-gray-600 border-gray-800' : 'text-gray-200 border-gray-700 hover:border-gray-500'}`}
-                            >
-                                {driver.name || driverNumber}
-                            </button>
-                        );
-                    })}
+
+                <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest hidden sm:block">Drivers</span>
+                    <div className="relative" ref={dropdownRef}>
+                        <button
+                            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                            className="bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300 text-xs px-3 py-1.5 rounded flex items-center justify-between min-w-[220px] transition-colors shadow-inner"
+                        >
+                            <span className="font-bold uppercase tracking-widest text-[10px]">
+                                Select Drivers... ({activeResults.length - hiddenDrivers.size}/{activeResults.length})
+                            </span>
+                            <span className="text-gray-500 ml-2 text-[10px]">{isDropdownOpen ? '▲' : '▼'}</span>
+                        </button>
+
+                        {isDropdownOpen && (
+                            <div className="absolute top-full mt-2 right-0 w-[260px] bg-gray-800 border border-gray-700 rounded-md shadow-2xl z-50 flex flex-col max-h-[300px]">
+                                <div className="p-2 border-b border-gray-700">
+                                    <input
+                                        type="text"
+                                        placeholder="Search driver by name or #..."
+                                        value={searchQuery}
+                                        onChange={event => setSearchQuery(event.target.value)}
+                                        className="w-full bg-gray-900 border border-gray-700 text-gray-200 text-xs font-mono rounded px-3 py-2 outline-none focus:border-blue-500 transition-colors placeholder-gray-600"
+                                    />
+                                </div>
+                                <div className="flex justify-between p-2 border-b border-gray-700 bg-gray-900/50">
+                                    <button
+                                        onClick={() => setHiddenDrivers(new Set())}
+                                        className="text-[10px] uppercase tracking-widest text-blue-400 hover:text-blue-300 font-bold transition-colors"
+                                    >
+                                        Select All
+                                    </button>
+                                    <button
+                                        onClick={() => setHiddenDrivers(new Set(
+                                            activeResults
+                                                .map(driver => Number(driver.driver_number))
+                                                .filter(dNum => dNum !== Number(currentDriverNumber))
+                                        ))}
+                                        className="text-[10px] uppercase tracking-widest text-red-400 hover:text-red-300 font-bold transition-colors"
+                                    >
+                                        Deselect All
+                                    </button>
+                                </div>
+                                <div className="overflow-y-auto custom-scrollbar p-1.5 flex-1">
+                                    {filteredDrivers.map(driver => {
+                                        const driverNumber = Number(driver.driver_number);
+                                        const isVisible = !hiddenDrivers.has(driverNumber);
+                                        const isCurrent = driverNumber === Number(currentDriverNumber);
+                                        return (
+                                            <div
+                                                key={driverNumber}
+                                                onClick={() => toggleDriver(driverNumber)}
+                                                className={`flex items-center gap-3 px-2 py-1.5 hover:bg-gray-700 rounded cursor-pointer transition-colors ${isCurrent ? 'bg-blue-500/5' : ''}`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isVisible}
+                                                    readOnly
+                                                    className="w-3.5 h-3.5 accent-blue-500 cursor-pointer rounded-sm"
+                                                />
+                                                <div className="w-5 h-2 flex items-center">
+                                                    <span
+                                                        className="w-full border-t-2"
+                                                        style={{
+                                                            borderColor: `#${driver.team_color}`,
+                                                            borderTopStyle: getTeamVariant(driver, activeResults) % 2 === 1 ? 'dashed' : 'solid'
+                                                        }}
+                                                    />
+                                                </div>
+                                                <span className="text-xs text-gray-200 font-bold uppercase tracking-wider">{driver.name}</span>
+                                                {isCurrent && <span className="text-[8px] uppercase tracking-widest font-black text-blue-400">Current</span>}
+                                                <span className="text-[10px] font-mono text-gray-500 ml-auto font-bold">#{driver.driver_number}</span>
+                                            </div>
+                                        );
+                                    })}
+                                    {filteredDrivers.length === 0 && (
+                                        <div className="p-4 text-center text-xs text-gray-500 font-bold uppercase tracking-widest">No drivers found</div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
             <div ref={chartRef} className="w-full" />
