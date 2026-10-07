@@ -42,38 +42,6 @@ const formatLapTime = (seconds: number | null) => {
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
 };
 
-const renderSectorBlock = (sectors: any) => {
-    if (!sectors) return null;
-    return (
-        <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S1:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_1 ? `${sectors.duration_sector_1.toFixed(3)}s` : (sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_1 || sectors.seg1)}
-            </div>
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S2:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_2 ? `${sectors.duration_sector_2.toFixed(3)}s` : (sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_2 || sectors.seg2)}
-            </div>
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S3:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_3 ? `${sectors.duration_sector_3.toFixed(3)}s` : (sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_3 || sectors.seg3)}
-            </div>
-        </div>
-    );
-};
-
 export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
@@ -247,10 +215,6 @@ export const DriverProfile = () => {
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
     const activeData = isLive ? liveData : histPayload;
-    const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
-    
-    const activeLapData = activeData.laps?.find((l: any) => l.lap_number === activeLapNumber) || null;
-    const activeStint = activeData.stints?.find((s: any) => s.lap_start <= activeLapNumber && (s.lap_end >= activeLapNumber || s.lap_end === 0)) || null;
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
