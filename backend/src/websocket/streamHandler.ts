@@ -4,7 +4,7 @@ import { ITelemetryProvider } from '../providers/ITelemetryProvider';
 import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
-import { getRaceDetails } from '../services/dataService';
+import { getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
 
 export const setupWebSocket = async (server: any) => {
     // Attach WebSocket handling immediately. Provider/bootstrap initialization may
@@ -19,6 +19,7 @@ export const setupWebSocket = async (server: any) => {
     let provider: ITelemetryProvider | null = null;
     let providerReady = false;
     let engineBroadcastBound = false;
+    let lapCountSessionKey: string | null = null;
 
     const broadcastSnapshot = () => {
         const payload = JSON.stringify(engine.getSnapshot());
@@ -125,7 +126,27 @@ export const setupWebSocket = async (server: any) => {
     attachEngineBroadcast();
 
     await provider.connect({
-        onStreamData: (topic, data) => engine.ingest(topic, data),
+        onStreamData: (topic, data) => {
+            engine.ingest(topic, data);
+
+            if (topic === 'sessions') {
+                const rows = Array.isArray(data) ? data : [data];
+                const latestSession = rows[rows.length - 1];
+                const sessionKey = latestSession?.session_key != null ? String(latestSession.session_key) : null;
+                const sessionType = String(latestSession?.session_type || latestSession?.session_name || '').toLowerCase();
+
+                if (
+                    sessionKey
+                    && sessionKey !== lapCountSessionKey
+                    && (sessionType.includes('race') || sessionType.includes('sprint'))
+                ) {
+                    lapCountSessionKey = sessionKey;
+                    void getScheduledTotalLaps(latestSession)
+                        .then(total => engine.setScheduledTotalLaps(total))
+                        .catch(error => console.warn('⚠️ Unable to refresh scheduled lap count:', error?.message || error));
+                }
+            }
+        },
         onTelemetry: (driverNumber, point) => {
             if (CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
                 for (const [ws, subs] of clientDriverSubs) {
