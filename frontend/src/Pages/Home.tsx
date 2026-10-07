@@ -198,17 +198,31 @@ export const Home = () => {
                                 )}
                             </div>
 
-                            <select
-                                value={selectedSeason ?? ''}
-                                onChange={event => changeSeason(Number(event.target.value))}
-                                disabled={seasonLoading}
-                                className="bg-gray-950 border border-gray-700 rounded-md px-3 py-2 text-xs font-bold text-gray-200 outline-none focus:border-blue-500 disabled:opacity-50"
-                                aria-label="Select Formula 1 season"
-                            >
-                                {(data.seasonMeta?.availableSeasons || []).map((year: number) => (
-                                    <option key={year} value={year}>{year}</option>
-                                ))}
-                            </select>
+                            <div className="flex items-center gap-2">
+                                {selectedSeason !== Number(data.seasonMeta?.currentSeason || new Date().getFullYear()) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => changeSeason(Number(data.seasonMeta?.currentSeason || new Date().getFullYear()))}
+                                        disabled={seasonLoading}
+                                        className="px-2.5 py-2 rounded-md border border-blue-500/40 bg-blue-500/10 text-[9px] font-black uppercase tracking-widest text-blue-300 hover:bg-blue-500/20 hover:border-blue-400 disabled:opacity-50 transition"
+                                        title="Jump back to the current season"
+                                    >
+                                        Current Season
+                                    </button>
+                                )}
+
+                                <select
+                                    value={selectedSeason ?? ''}
+                                    onChange={event => changeSeason(Number(event.target.value))}
+                                    disabled={seasonLoading}
+                                    className="bg-gray-950 border border-gray-700 rounded-md px-3 py-2 text-xs font-bold text-gray-200 outline-none focus:border-blue-500 disabled:opacity-50"
+                                    aria-label="Select Formula 1 season"
+                                >
+                                    {(data.seasonMeta?.availableSeasons || []).map((year: number) => (
+                                        <option key={year} value={year}>{year}</option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
                     </div>
 
