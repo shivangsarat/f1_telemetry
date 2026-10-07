@@ -217,8 +217,8 @@ export const LiveTrackerWidget = ({
     tracker,
     sessionKey,
     selectedDriver,
-    sticky = false,
-    defaultMinimized = false
+    sticky = true,
+    defaultMinimized = true
 }: {
     tracker?: TrackerState | null;
     sessionKey?: string;
