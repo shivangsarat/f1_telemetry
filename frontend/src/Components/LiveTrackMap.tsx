@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 type TrackerState = {
@@ -29,6 +29,20 @@ export const LiveTrackMap = ({
     const trace = tracker?.trace || [];
     const cars = tracker?.cars || [];
     const circuitCorners = tracker?.circuit?.corners || [];
+    const [now, setNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    const lastLocationTime = cars.reduce((latest: number, car: any) => {
+        const time = car?.date ? new Date(car.date).getTime() : NaN;
+        return Number.isFinite(time) ? Math.max(latest, time) : latest;
+    }, 0);
+    const hasRecordedPositions = cars.length > 0;
+    const isStreaming = hasRecordedPositions && lastLocationTime > 0 && (now - lastLocationTime) <= 5000;
+    const trackerMode = isStreaming ? 'LIVE' : hasRecordedPositions ? 'LAST RECORDED' : 'MAP ONLY';
 
     const geometry = useMemo(() => {
         const rotationRadians = (Number(tracker?.circuit?.rotation || 0) * Math.PI) / 180;
@@ -91,8 +105,44 @@ export const LiveTrackMap = ({
 
     if (!geometry) {
         return (
-            <div className="h-48 flex items-center justify-center text-xs text-gray-500 uppercase tracking-widest font-bold">
-                Awaiting live location stream…
+            <div className="w-full">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                        {tracker?.circuit?.name || 'Circuit map'}
+                    </span>
+                    <span className={`text-[9px] uppercase tracking-wider font-black ${isStreaming ? 'text-green-400' : hasRecordedPositions ? 'text-amber-400' : 'text-gray-500'}`}>
+                        {trackerMode}
+                    </span>
+                </div>
+
+                {tracker?.circuit?.image ? (
+                    <div className="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
+                        <img
+                            src={tracker.circuit.image}
+                            alt={`${tracker?.circuit?.name || 'Circuit'} map`}
+                            className={`w-full object-contain ${compact ? 'max-h-[250px]' : 'max-h-[580px]'} opacity-90`}
+                        />
+                    </div>
+                ) : (
+                    <div className="h-48 rounded-xl border border-gray-800 bg-gray-950/40 flex items-center justify-center text-xs text-gray-500 uppercase tracking-widest font-bold">
+                        Circuit geometry unavailable
+                    </div>
+                )}
+
+                {hasRecordedPositions && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {[...cars]
+                            .sort((a: any, b: any) => Number(a.position || 99) - Number(b.position || 99))
+                            .map((car: any) => (
+                                <div key={car.driver_number} className="px-2.5 py-1.5 rounded border border-gray-800 bg-gray-950/60 flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: normalizeColor(car.team_color) }} />
+                                    <span className="font-mono text-[10px] font-bold text-gray-300">
+                                        P{car.position ?? '-'} · {car.acronym || car.name} #{car.driver_number}
+                                    </span>
+                                </div>
+                            ))}
+                    </div>
+                )}
             </div>
         );
     }
@@ -106,8 +156,8 @@ export const LiveTrackMap = ({
                     <span className="text-[10px] uppercase tracking-widest font-bold text-gray-400">
                         {tracker.circuit.name}
                     </span>
-                    <span className="text-[9px] uppercase tracking-wider text-gray-600">
-                        Circuit geometry + live location
+                    <span className={`text-[9px] uppercase tracking-wider font-black ${isStreaming ? 'text-green-400' : hasRecordedPositions ? 'text-amber-400' : 'text-gray-500'}`}>
+                        {isStreaming ? 'Live positions' : hasRecordedPositions ? 'Last recorded positions' : 'Circuit map'}
                     </span>
                 </div>
             )}
@@ -162,6 +212,7 @@ export const LiveTrackMap = ({
                                 cy={point.y}
                                 r={radius}
                                 fill={normalizeColor(car.team_color)}
+                                fillOpacity={isStreaming ? 1 : 0.6}
                                 stroke={selected ? '#ffffff' : '#111827'}
                                 strokeWidth={selected ? 3 : 2}
                             />
@@ -234,8 +285,8 @@ export const LiveTrackerWidget = ({
         >
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
                 <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-xs font-black uppercase tracking-widest text-gray-200">Live Driver Tracker</span>
+                    <span className={`w-2 h-2 rounded-full ${tracker?.cars?.length ? 'bg-green-500' : 'bg-gray-500'}`} />
+                    <span className="text-xs font-black uppercase tracking-widest text-gray-200">Driver Tracker</span>
                 </div>
                 <div className="flex items-center gap-2">
                     <Link
