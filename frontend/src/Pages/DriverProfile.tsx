@@ -245,6 +245,13 @@ export const DriverProfile = () => {
     
     const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
     const isRaceMode = isLive ? Boolean(liveRace?.isRace) : Boolean(raceDetails?.isRace);
+    const activeSessionInfo = isLive ? liveRace?.sessionInfo : raceDetails?.sessionInfo;
+    const activeMeetingInfo = isLive ? liveRace?.meetingInfo : raceDetails?.meetingInfo;
+    const raceName =
+        activeMeetingInfo?.meeting_name
+        || activeSessionInfo?.meeting_name
+        || (activeSessionInfo?.location ? `${activeSessionInfo.location} Grand Prix` : 'Grand Prix');
+    const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
 
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
@@ -281,21 +288,39 @@ export const DriverProfile = () => {
     return (
         <div className="p-6 bg-black text-white min-h-screen flex flex-col gap-6">
 
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-3 flex-wrap">
-                        <h1 className="text-3xl font-bold">
-                            {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
-                        </h1>
-                        {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+            <div className="flex justify-between items-start gap-6 flex-wrap">
+                <div className="flex flex-col gap-2 min-w-0">
+                    <div className="flex items-center gap-2">
+                        {isLive && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />}
+                        <span className={`text-xs font-black uppercase tracking-[0.16em] ${isLive ? 'text-green-400' : 'text-blue-400'}`}>
+                            {raceName}
+                        </span>
+                        {activeSessionName && (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">
+                                · {activeSessionName}
+                            </span>
+                        )}
                     </div>
-                    {!isAutoScroll && (
-                        <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
-                            Resume Auto-Scroll →
-                        </button>
-                    )}
+
+                    <div className="flex items-center gap-6 flex-wrap">
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <h1 className="text-3xl font-bold">
+                                {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
+                            </h1>
+                            {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+                        </div>
+                        {!isAutoScroll && (
+                            <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
+                                Resume Auto-Scroll →
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <Link to={`/race/${sessionKey}`} className="text-gray-400 hover:text-white uppercase font-bold text-sm">
+
+                <Link
+                    to={`/race/${sessionKey}`}
+                    className="text-gray-400 hover:text-white uppercase font-bold text-sm shrink-0"
+                >
                     ← Back to Results
                 </Link>
             </div>
