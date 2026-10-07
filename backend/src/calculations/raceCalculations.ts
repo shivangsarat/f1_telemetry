@@ -243,8 +243,10 @@ const normalizeDriverName = (name: any) => String(name || '')
 
 const getChampionStatus = (name: any, sessionYear: number, clinched = false) => {
     const titleSeasons = WORLD_CHAMPION_SEASONS[normalizeDriverName(name)] || [];
+    const priorTitleSeasons = titleSeasons.filter(year => year < sessionYear);
     return {
-        titles: titleSeasons.filter(year => year < sessionYear).length,
+        titles: priorTitleSeasons.length,
+        years: priorTitleSeasons,
         defending: titleSeasons.includes(sessionYear - 1),
         clinched
     };
