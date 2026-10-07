@@ -42,38 +42,6 @@ const formatLapTime = (seconds: number | null) => {
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
 };
 
-const renderSectorBlock = (sectors: any) => {
-    if (!sectors) return null;
-    return (
-        <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S1:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_1 ? `${sectors.duration_sector_1.toFixed(3)}s` : (sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_1 || sectors.seg1)}
-            </div>
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S2:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_2 ? `${sectors.duration_sector_2.toFixed(3)}s` : (sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_2 || sectors.seg2)}
-            </div>
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S3:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_3 ? `${sectors.duration_sector_3.toFixed(3)}s` : (sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_3 || sectors.seg3)}
-            </div>
-        </div>
-    );
-};
-
 export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
@@ -82,12 +50,20 @@ export const DriverProfile = () => {
     
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
+    const cacheHistoricalDriver = useRaceStore(state => state.cacheHistoricalDriver);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
     
     const liveData = useDriverTelemetry(driverNumber, isLive); 
 
-    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
-    const [raceDetails, setRaceDetails] = useState<any>(null);
+    const historicalCacheKey = `${sessionKey || ''}:${driverNumber}`;
+    const cachedHistoricalPayload = useRaceStore(state => state.historicalDrivers[historicalCacheKey]);
+    const cachedRaceDetails = useRaceStore(state => sessionKey ? state.historicalRaces[String(sessionKey)] : undefined);
+
+    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>(() => (
+        cachedHistoricalPayload || { telemetry: [], laps: [], stints: [] }
+    ));
+    const [raceDetails, setRaceDetails] = useState<any>(() => cachedRaceDetails || null);
     const [loading, setLoading] = useState(false);
 
     const [isAutoScroll, setIsAutoScroll] = useState(true);
@@ -175,18 +151,44 @@ export const DriverProfile = () => {
             return;
         }
 
+        const key = String(sessionKey || '');
+        if (!key || !Number.isFinite(driverNumber)) return;
+
+        const state = useRaceStore.getState();
+        const telemetryKey = `${key}:${driverNumber}`;
+        const cachedTelemetry = state.historicalDrivers[telemetryKey];
+        const cachedRace = state.historicalRaces[key];
+
+        if (cachedTelemetry) setHistPayload(cachedTelemetry);
+        if (cachedRace) setRaceDetails(cachedRace);
+
+        const needsTelemetry = !cachedTelemetry;
+        const needsRace = !cachedRace;
+
+        if (!needsTelemetry && !needsRace) {
+            setLoading(false);
+            return;
+        }
+
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
         setLoading(true);
 
         Promise.all([
-            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()),
-            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
+            needsTelemetry
+                ? fetch(`${API_BASE}/api/telemetry/${key}/${driverNumber}`).then(r => r.json())
+                : Promise.resolve(cachedTelemetry),
+            needsRace
+                ? fetch(`${API_BASE}/api/race-details/${key}`).then(r => r.json())
+                : Promise.resolve(cachedRace)
         ]).then(([cleanData, rd]) => {
-            setHistPayload(cleanData);
-            setRaceDetails(rd);
+            if (needsTelemetry && cleanData) cacheHistoricalDriver(key, driverNumber, cleanData);
+            if (needsRace && rd) cacheHistoricalRace(key, rd);
+
+            if (cleanData) setHistPayload(cleanData);
+            if (rd) setRaceDetails(rd);
             setLoading(false);
         }).catch(() => setLoading(false));
-    }, [sessionKey, driverNumber, isLive]);
+    }, [sessionKey, driverNumber, isLive, cacheHistoricalDriver, cacheHistoricalRace]);
 
     const snapToPlayhead = useCallback(() => {
         if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
@@ -243,14 +245,18 @@ export const DriverProfile = () => {
     
     const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
     const isRaceMode = isLive ? Boolean(liveRace?.isRace) : Boolean(raceDetails?.isRace);
+    const activeSessionInfo = isLive ? liveRace?.sessionInfo : raceDetails?.sessionInfo;
+    const activeMeetingInfo = isLive ? liveRace?.meetingInfo : raceDetails?.meetingInfo;
+    const raceName =
+        activeMeetingInfo?.meeting_name
+        || activeSessionInfo?.meeting_name
+        || (activeSessionInfo?.location ? `${activeSessionInfo.location} Grand Prix` : 'Grand Prix');
+    const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
 
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
-    
-    const activeLapData = activeData.laps?.find((l: any) => l.lap_number === activeLapNumber) || null;
-    const activeStint = activeData.stints?.find((s: any) => s.lap_start <= activeLapNumber && (s.lap_end >= activeLapNumber || s.lap_end === 0)) || null;
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
@@ -282,21 +288,39 @@ export const DriverProfile = () => {
     return (
         <div className="p-6 bg-black text-white min-h-screen flex flex-col gap-6">
 
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-3 flex-wrap">
-                        <h1 className="text-3xl font-bold">
-                            {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
-                        </h1>
-                        {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+            <div className="flex justify-between items-start gap-6 flex-wrap">
+                <div className="flex flex-col gap-2 min-w-0">
+                    <div className="flex items-center gap-2">
+                        {isLive && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />}
+                        <span className={`text-xs font-black uppercase tracking-[0.16em] ${isLive ? 'text-green-400' : 'text-blue-400'}`}>
+                            {raceName}
+                        </span>
+                        {activeSessionName && (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">
+                                · {activeSessionName}
+                            </span>
+                        )}
                     </div>
-                    {!isAutoScroll && (
-                        <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
-                            Resume Auto-Scroll →
-                        </button>
-                    )}
+
+                    <div className="flex items-center gap-6 flex-wrap">
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <h1 className="text-3xl font-bold">
+                                {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
+                            </h1>
+                            {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+                        </div>
+                        {!isAutoScroll && (
+                            <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
+                                Resume Auto-Scroll →
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <Link to={`/race/${sessionKey}`} className="text-gray-400 hover:text-white uppercase font-bold text-sm">
+
+                <Link
+                    to={`/race/${sessionKey}`}
+                    className="text-gray-400 hover:text-white uppercase font-bold text-sm shrink-0"
+                >
                     ← Back to Results
                 </Link>
             </div>
@@ -573,6 +597,7 @@ export const DriverProfile = () => {
 
                     <AllDriversLapTimesChart
                         activeResults={activeResults}
+                        currentDriverNumber={driverNumber}
                         maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
                     />
                 </div>
