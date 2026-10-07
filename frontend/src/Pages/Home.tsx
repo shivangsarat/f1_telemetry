@@ -1,44 +1,96 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Table } from '../Utils/Table';
+import { useRaceStore } from '../store/useRaceStore';
 
 const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
 
 export const Home = () => {
-    const [data, setData] = useState<any>(null);
-    const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
-    const [seasonRaces, setSeasonRaces] = useState<any[]>([]);
+    const cachedHomeData = useRaceStore(state => state.homeData);
+    const cachedSelectedSeason = useRaceStore(state => state.selectedSeason);
+    const seasonRaceCache = useRaceStore(state => state.seasonRaces);
+    const cacheHomeData = useRaceStore(state => state.cacheHomeData);
+    const cacheSeasonRaces = useRaceStore(state => state.cacheSeasonRaces);
+    const persistSelectedSeason = useRaceStore(state => state.setSelectedSeason);
+
+    const initialSeason = cachedSelectedSeason
+        ?? Number(cachedHomeData?.seasonMeta?.currentSeason || new Date().getFullYear());
+
+    const [data, setData] = useState<any>(() => cachedHomeData);
+    const [selectedSeason, setSelectedSeason] = useState<number | null>(() => initialSeason);
+    const [seasonRaces, setSeasonRaces] = useState<any[]>(() =>
+        seasonRaceCache[initialSeason] || cachedHomeData?.pastRaces || []
+    );
     const [seasonLoading, setSeasonLoading] = useState(false);
     const [seasonError, setSeasonError] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
+        const state = useRaceStore.getState();
+        const cached = state.homeData;
+        const cacheAge = Date.now() - state.homeDataUpdatedAt;
+
+        if (cached) {
+            setData(cached);
+            const currentSeason = Number(cached?.seasonMeta?.currentSeason || new Date().getFullYear());
+            const restoredSeason = state.selectedSeason ?? currentSeason;
+            setSelectedSeason(restoredSeason);
+            setSeasonRaces(state.seasonRaces[restoredSeason] || (restoredSeason === currentSeason ? cached.pastRaces || [] : []));
+        }
+
+        // Keep current/live home metadata fresh, but never blank the page while it
+        // refreshes. A quick route return within 30 seconds performs no request.
+        if (cached && cacheAge < 30000) return;
+
         fetch(`${API_BASE}/api/home`)
             .then(r => {
                 if (!r.ok) throw new Error('Failed to load dashboard');
                 return r.json();
             })
             .then(payload => {
+                cacheHomeData(payload);
                 setData(payload);
+
                 const currentSeason = Number(payload?.seasonMeta?.currentSeason || new Date().getFullYear());
-                setSelectedSeason(currentSeason);
-                setSeasonRaces(payload?.pastRaces || []);
+                const restoredSeason = useRaceStore.getState().selectedSeason ?? currentSeason;
+                if (useRaceStore.getState().selectedSeason == null) {
+                    persistSelectedSeason(currentSeason);
+                    setSelectedSeason(currentSeason);
+                }
+
+                cacheSeasonRaces(currentSeason, payload?.pastRaces || []);
+                if (restoredSeason === currentSeason) {
+                    setSeasonRaces(payload?.pastRaces || []);
+                }
             })
-            .catch(() => setSeasonError('Unable to load dashboard data.'));
-    }, []);
+            .catch(() => {
+                if (!cached) setSeasonError('Unable to load dashboard data.');
+            });
+    }, [cacheHomeData, cacheSeasonRaces, persistSelectedSeason]);
 
     const changeSeason = async (year: number) => {
         if (!Number.isInteger(year) || year === selectedSeason) return;
 
         setSelectedSeason(year);
-        setSeasonLoading(true);
+        persistSelectedSeason(year);
         setSeasonError('');
+
+        const cached = useRaceStore.getState().seasonRaces[year];
+        if (cached) {
+            setSeasonRaces(cached);
+            setSeasonLoading(false);
+            return;
+        }
+
+        setSeasonLoading(true);
 
         try {
             const response = await fetch(`${API_BASE}/api/seasons/${year}/races`);
             if (!response.ok) throw new Error('Failed to load season');
             const payload = await response.json();
-            setSeasonRaces(payload.races || []);
+            const races = payload.races || [];
+            cacheSeasonRaces(year, races);
+            setSeasonRaces(races);
         } catch {
             setSeasonRaces([]);
             setSeasonError(`Unable to load ${year} season races.`);
