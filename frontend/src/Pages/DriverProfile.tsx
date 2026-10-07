@@ -50,12 +50,20 @@ export const DriverProfile = () => {
     
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
+    const cacheHistoricalDriver = useRaceStore(state => state.cacheHistoricalDriver);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
     
     const liveData = useDriverTelemetry(driverNumber, isLive); 
 
-    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
-    const [raceDetails, setRaceDetails] = useState<any>(null);
+    const historicalCacheKey = `${sessionKey || ''}:${driverNumber}`;
+    const cachedHistoricalPayload = useRaceStore(state => state.historicalDrivers[historicalCacheKey]);
+    const cachedRaceDetails = useRaceStore(state => sessionKey ? state.historicalRaces[String(sessionKey)] : undefined);
+
+    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>(() => (
+        cachedHistoricalPayload || { telemetry: [], laps: [], stints: [] }
+    ));
+    const [raceDetails, setRaceDetails] = useState<any>(() => cachedRaceDetails || null);
     const [loading, setLoading] = useState(false);
 
     const [isAutoScroll, setIsAutoScroll] = useState(true);
@@ -143,18 +151,44 @@ export const DriverProfile = () => {
             return;
         }
 
+        const key = String(sessionKey || '');
+        if (!key || !Number.isFinite(driverNumber)) return;
+
+        const state = useRaceStore.getState();
+        const telemetryKey = `${key}:${driverNumber}`;
+        const cachedTelemetry = state.historicalDrivers[telemetryKey];
+        const cachedRace = state.historicalRaces[key];
+
+        if (cachedTelemetry) setHistPayload(cachedTelemetry);
+        if (cachedRace) setRaceDetails(cachedRace);
+
+        const needsTelemetry = !cachedTelemetry;
+        const needsRace = !cachedRace;
+
+        if (!needsTelemetry && !needsRace) {
+            setLoading(false);
+            return;
+        }
+
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
         setLoading(true);
 
         Promise.all([
-            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()),
-            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
+            needsTelemetry
+                ? fetch(`${API_BASE}/api/telemetry/${key}/${driverNumber}`).then(r => r.json())
+                : Promise.resolve(cachedTelemetry),
+            needsRace
+                ? fetch(`${API_BASE}/api/race-details/${key}`).then(r => r.json())
+                : Promise.resolve(cachedRace)
         ]).then(([cleanData, rd]) => {
-            setHistPayload(cleanData);
-            setRaceDetails(rd);
+            if (needsTelemetry && cleanData) cacheHistoricalDriver(key, driverNumber, cleanData);
+            if (needsRace && rd) cacheHistoricalRace(key, rd);
+
+            if (cleanData) setHistPayload(cleanData);
+            if (rd) setRaceDetails(rd);
             setLoading(false);
         }).catch(() => setLoading(false));
-    }, [sessionKey, driverNumber, isLive]);
+    }, [sessionKey, driverNumber, isLive, cacheHistoricalDriver, cacheHistoricalRace]);
 
     const snapToPlayhead = useCallback(() => {
         if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
