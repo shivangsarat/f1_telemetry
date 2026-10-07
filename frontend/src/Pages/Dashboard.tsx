@@ -12,14 +12,22 @@ export const Dashboard = () => {
     const navigate = useNavigate();
     const isLiveSession = sessionKey === 'live';
 
-    const [histData, setHistData] = useState<any>({
-        results: [], weather: null, sessionBests: null, isRace: true,
-        maxRaceLap: 0, availableSessions: [], loading: !isLiveSession
-    });
-    const [histRaceControl, setHistRaceControl] = useState<any[]>([]);
+    const initialHistoricalData = !isLiveSession && sessionKey
+        ? useRaceStore.getState().historicalRaces[String(sessionKey)]
+        : null;
+
+    const [histData, setHistData] = useState<any>(() => initialHistoricalData
+        ? { ...initialHistoricalData, loading: false }
+        : {
+            results: [], weather: null, sessionBests: null, isRace: true,
+            maxRaceLap: 0, availableSessions: [], loading: !isLiveSession
+        }
+    );
+    const [histRaceControl, setHistRaceControl] = useState<any[]>(() => initialHistoricalData?.raceControl || []);
     const [latestToast, setLatestToast] = useState<any>(null);
     const [showScrollTop, setShowScrollTop] = useState(false);
     const [scrollTopDismissed, setScrollTopDismissed] = useState(false);
+    const [sessionClockNow, setSessionClockNow] = useState(() => Date.now());
     const resultsScrollRef = useRef<HTMLDivElement>(null);
     const raceControlBaselineReadyRef = useRef(false);
     const lastRaceControlKeyRef = useRef<string | null>(null);
@@ -27,6 +35,7 @@ export const Dashboard = () => {
 
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
 
     useEffect(() => {
         if (isLiveSession) {
@@ -34,24 +43,66 @@ export const Dashboard = () => {
             return;
         }
 
-        const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
-        setHistData(prev => ({ ...prev, loading: true }));
+        const key = String(sessionKey || '');
+        if (!key) return;
 
-        fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
+        const cached = useRaceStore.getState().historicalRaces[key];
+        if (cached) {
+            setHistData({ ...cached, loading: false });
+            setHistRaceControl(cached.raceControl || []);
+            return;
+        }
+
+        const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
+        setHistData((prev: any) => ({ ...prev, loading: true }));
+
+        fetch(`${API_BASE}/api/race-details/${key}`).then(r => r.json())
             .then(data => {
+                cacheHistoricalRace(key, data);
                 setHistData({ ...data, loading: false });
                 setHistRaceControl(data.raceControl || []);
             })
-            .catch(() => setHistData(prev => ({ ...prev, loading: false })));
-    }, [sessionKey, isLiveSession, connect]);
+            .catch(() => setHistData((prev: any) => ({ ...prev, loading: false })));
+    }, [sessionKey, isLiveSession, connect, cacheHistoricalRace]);
 
     const activeResults = isLiveSession ? (liveRace?.results || []) : (histData.results || []);
     const activeWeather = isLiveSession ? liveRace?.weather : histData.weather;
     const activeBests = isLiveSession ? liveRace?.sessionBests : histData.sessionBests;
     const isRaceMode = isLiveSession ? Boolean(liveRace?.isRace) : Boolean(histData.isRace);
     const activeMaxLap = isLiveSession ? Number(liveRace?.maxRaceLap || 0) : Number(histData.maxRaceLap || 0);
+    const scheduledTotalLaps = isLiveSession
+        ? Number(liveRace?.scheduledTotalLaps || 0)
+        : Number(histData.scheduledTotalLaps || 0);
+    const displayedRaceLaps = scheduledTotalLaps > 0 ? scheduledTotalLaps : activeMaxLap;
     const activeRaceControl = isLiveSession ? (liveRace?.raceControl || []) : histRaceControl;
     const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
+    const activeSessionInfo = isLiveSession ? liveRace?.sessionInfo : histData.sessionInfo;
+    const activeMeetingInfo = isLiveSession ? liveRace?.meetingInfo : histData.meetingInfo;
+    const raceName =
+        activeMeetingInfo?.meeting_name
+        || activeSessionInfo?.meeting_name
+        || (activeSessionInfo?.location ? `${activeSessionInfo.location} Grand Prix` : 'Grand Prix');
+    const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
+
+    const sessionStartMs = activeSessionInfo?.date_start ? new Date(activeSessionInfo.date_start).getTime() : NaN;
+    const sessionEndMs = activeSessionInfo?.date_end ? new Date(activeSessionInfo.date_end).getTime() : NaN;
+    const scheduledSessionDurationMs = Number.isFinite(sessionStartMs) && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionStartMs)
+        : 0;
+    const remainingSessionMs = isLiveSession && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionClockNow)
+        : scheduledSessionDurationMs;
+    const formatSessionClock = (durationMs: number) => {
+        if (!Number.isFinite(durationMs) || durationMs <= 0) return '--:--';
+        const totalSeconds = Math.max(0, Math.ceil(durationMs / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return hours > 0
+            ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+            : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    };
+    const displayedSessionClock = formatSessionClock(remainingSessionMs);
 
     const raceControlEventKey = (message: any) =>
         String(
@@ -96,6 +147,13 @@ export const Dashboard = () => {
         const timer = setTimeout(() => setLatestToast(null), 10000);
         return () => clearTimeout(timer);
     }, [latestToast]);
+
+    useEffect(() => {
+        if (isRaceMode || !isLiveSession) return;
+        setSessionClockNow(Date.now());
+        const timer = window.setInterval(() => setSessionClockNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [isRaceMode, isLiveSession, activeSessionInfo?.session_key, activeSessionInfo?.date_end]);
 
     const updateScrollTopVisibility = () => {
         const tableScrollTop = resultsScrollRef.current?.scrollTop || 0;
@@ -195,13 +253,27 @@ export const Dashboard = () => {
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
                 <div className="flex justify-between items-center">
                     
-                    <div className="flex items-center gap-6">
-                        <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold">← Back</Link>
+                    <div className="flex items-center gap-6 min-w-0 flex-wrap">
+                        <Link to="/" className="text-gray-400 hover:text-white uppercase tracking-widest text-sm font-bold shrink-0">← Back</Link>
+
+                        <div className="min-w-[210px]">
+                            <div className="flex items-center gap-2">
+                                {isLiveSession && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />}
+                                <h1 className="text-lg font-black uppercase tracking-wide text-white truncate">
+                                    {raceName}
+                                </h1>
+                            </div>
+                            <div className="text-[10px] uppercase tracking-[0.18em] font-bold text-gray-500 mt-0.5">
+                                {isLiveSession ? 'Live · ' : ''}{activeSessionName || (isRaceMode ? 'Race' : 'Session')}
+                            </div>
+                        </div>
                         
-                        <div className="flex gap-2 bg-gray-900/50 p-1 rounded-lg">
+                        <div className="flex gap-2 bg-gray-900/50 p-1 rounded-lg flex-wrap">
                             {availableSessions.map((s: any) => {
                                 const isFuture = new Date(s.date_start).getTime() > Date.now();
-                                const isActive = sessionKey === String(s.session_key);
+                                const isActive = isLiveSession
+                                    ? String(activeSessionInfo?.session_key ?? '') === String(s.session_key)
+                                    : sessionKey === String(s.session_key);
 
                                 return (
                                     <button
@@ -210,7 +282,9 @@ export const Dashboard = () => {
                                         disabled={isFuture}
                                         className={`px-4 py-2 text-xs font-bold tracking-widest rounded-md transition-all ${
                                             isActive 
-                                                ? 'bg-red-600 text-white shadow-lg' 
+                                                ? isLiveSession
+                                                    ? 'bg-green-600/20 text-green-300 border border-green-500/40 shadow-lg'
+                                                    : 'bg-red-600 text-white shadow-lg'
                                                 : isFuture
                                                     ? 'text-gray-700 cursor-not-allowed opacity-50'
                                                     : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -233,11 +307,27 @@ export const Dashboard = () => {
                                 Live Tracker
                             </Link>
                         )}
-                    {isRaceMode && activeMaxLap > 0 && (
-                        <div className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3">
+                    {isRaceMode ? (
+                        displayedRaceLaps > 0 && (
+                            <div
+                                className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
+                                title={scheduledTotalLaps > 0 ? 'Scheduled race distance' : 'Scheduled distance unavailable; showing laps observed so far'}
+                            >
+                                <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
+                                <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Race Laps</span>
+                                <span className="font-black text-white font-mono text-sm">{displayedRaceLaps}</span>
+                            </div>
+                        )
+                    ) : (
+                        <div
+                            className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
+                            title={isLiveSession ? 'Estimated session time remaining' : 'Scheduled session duration'}
+                        >
                             <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
-                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">Total Laps</span>
-                            <span className="font-black text-white font-mono text-sm">{activeMaxLap}</span>
+                            <span className="font-bold uppercase tracking-widest text-xs text-gray-400">
+                                {isLiveSession ? 'Session Time' : 'Session Duration'}
+                            </span>
+                            <span className="font-black text-white font-mono text-sm tabular-nums">{displayedSessionClock}</span>
                         </div>
                     )}
                     </div>
