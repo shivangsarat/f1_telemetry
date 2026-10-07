@@ -11,6 +11,8 @@ type LiveRaceData = {
     availableSessions: any[];
     sessionName?: string;
     sessionInfo?: any;
+    meetingInfo?: any;
+    circuitInfo?: any;
     tracker?: {
         trace: any[];
         cars: any[];
@@ -106,6 +108,8 @@ export const useRaceStore = create<RaceState>((set) => ({
                             availableSessions: msg.data.availableSessions || [],
                             sessionName: msg.data.sessionName,
                             sessionInfo: msg.data.sessionInfo,
+                            meetingInfo: msg.data.meetingInfo,
+                            circuitInfo: msg.data.circuitInfo,
                             tracker: (() => {
                                 const incoming = msg.data.tracker;
                                 const previous = useRaceStore.getState().liveRace?.tracker;
