@@ -356,18 +356,63 @@ const buildTyreHistory = (
     return { stints, pitStops: matchedPitStops };
 };
 
-const mapSeasonRaceCalendar = (meetings: any[] = [], sessions: any[] = [], year: number) =>
-    meetings.map((meeting: any) => {
-        const race = sessions.find((session: any) => session.meeting_key === meeting.meeting_key);
-        return race ? {
-            round: meeting.meeting_name,
-            location: meeting.location,
-            date: race.date_start || meeting.date_start,
-            session_key: race.session_key,
-            meeting_key: meeting.meeting_key,
-            year
-        } : null;
-    }).filter(Boolean);
+const isTestingSession = (meeting: any, session: any) => {
+    const meetingName = String(meeting?.meeting_name || '').toLowerCase();
+    const sessionName = String(session?.session_name || '').toLowerCase();
+    const sessionType = String(session?.session_type || '').toLowerCase();
+    return meetingName.includes('test') || sessionName.includes('test') || sessionType.includes('test');
+};
+
+const mapSeasonCalendarEntries = (meetings: any[] = [], sessions: any[] = [], year: number) => {
+    const entries: any[] = [];
+
+    for (const meeting of meetings) {
+        const meetingSessions = sessions
+            .filter((session: any) => session.meeting_key === meeting.meeting_key)
+            .sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
+
+        const testingSessions = meetingSessions.filter((session: any) => isTestingSession(meeting, session));
+        if (testingSessions.length > 0) {
+            for (const session of testingSessions) {
+                const meetingName = String(meeting.meeting_name || 'Testing');
+                const sessionName = String(session.session_name || session.session_type || 'Session');
+                const duplicateName = meetingName.toLowerCase().includes(sessionName.toLowerCase());
+
+                entries.push({
+                    round: duplicateName ? meetingName : `${meetingName} — ${sessionName}`,
+                    location: meeting.location,
+                    date: session.date_start || meeting.date_start,
+                    session_key: session.session_key,
+                    meeting_key: meeting.meeting_key,
+                    year,
+                    is_testing: true,
+                    session_name: session.session_name
+                });
+            }
+            continue;
+        }
+
+        const race = meetingSessions.find((session: any) =>
+            String(session.session_name || '').toLowerCase() === 'race'
+            || String(session.session_type || '').toLowerCase() === 'race'
+        );
+
+        if (race) {
+            entries.push({
+                round: meeting.meeting_name,
+                location: meeting.location,
+                date: race.date_start || meeting.date_start,
+                session_key: race.session_key,
+                meeting_key: meeting.meeting_key,
+                year,
+                is_testing: false,
+                session_name: race.session_name
+            });
+        }
+    }
+
+    return entries;
+};
 
 const OPENF1_OLDEST_SEASON = 2023;
 
@@ -398,14 +443,14 @@ export const getSeasonRaces = async (year: number) => {
             () => openF1Request(`${OPENF1_BASE}/meetings?year=${year}`)
         ),
         getCached(
-            `sessions_race_${year}`,
+            `sessions_all_${year}`,
             600000,
-            () => openF1Request(`${OPENF1_BASE}/sessions?year=${year}&session_name=Race`)
+            () => openF1Request(`${OPENF1_BASE}/sessions?year=${year}`)
         )
     ]);
 
     const now = Date.now();
-    return mapSeasonRaceCalendar(meetingsRes?.data || [], sessionsRes?.data || [], year)
+    return mapSeasonCalendarEntries(meetingsRes?.data || [], sessionsRes?.data || [], year)
         .filter((race: any) => new Date(race.date).getTime() <= now)
         .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 };
@@ -420,12 +465,12 @@ export const getHomeData = async () => {
     ]);
 
     let meetingsRes = await getCached(`meetings_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=${currentYear}`));
-    let sessionsRes = await getCached(`sessions_race_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}&session_name=Race`));
+    let sessionsRes = await getCached(`sessions_all_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}`));
 
     if (!meetingsRes?.data || meetingsRes.data.length === 0) {
         console.warn(`No calendar data found for ${currentYear}. Falling back to 2024 calendar...`);
         meetingsRes = await getCached('meetings_2024', 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=2024`));
-        sessionsRes = await getCached('sessions_race_2024', 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=2024&session_name=Race`));
+        sessionsRes = await getCached('sessions_all_2024', 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=2024`));
     }
 
     let nextYearMeetingsRes: any = { data: [] };
@@ -433,7 +478,7 @@ export const getHomeData = async () => {
     try {
         [nextYearMeetingsRes, nextYearSessionsRes] = await Promise.all([
             getCached(`meetings_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=${currentYear + 1}`)),
-            getCached(`sessions_race_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear + 1}&session_name=Race`))
+            getCached(`sessions_all_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear + 1}`))
         ]);
     } catch (error: any) {
         console.warn(`Next-year calendar for ${currentYear + 1} is not available yet:`, error?.message || error);
@@ -456,8 +501,8 @@ export const getHomeData = async () => {
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
-    const races = mapSeasonRaceCalendar(meetingsRes?.data || [], sessionsRes?.data || [], currentYear);
-    const nextYearRaces = mapSeasonRaceCalendar(nextYearMeetingsRes?.data || [], nextYearSessionsRes?.data || [], currentYear + 1)
+    const races = mapSeasonCalendarEntries(meetingsRes?.data || [], sessionsRes?.data || [], currentYear);
+    const nextYearRaces = mapSeasonCalendarEntries(nextYearMeetingsRes?.data || [], nextYearSessionsRes?.data || [], currentYear + 1)
         .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const now = Date.now();
