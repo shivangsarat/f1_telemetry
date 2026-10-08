@@ -373,22 +373,26 @@ const mapSeasonCalendarEntries = (meetings: any[] = [], sessions: any[] = [], ye
 
         const testingSessions = meetingSessions.filter((session: any) => isTestingSession(meeting, session));
         if (testingSessions.length > 0) {
-            for (const session of testingSessions) {
-                const meetingName = String(meeting.meeting_name || 'Testing');
-                const sessionName = String(session.session_name || session.session_type || 'Session');
-                const duplicateName = meetingName.toLowerCase().includes(sessionName.toLowerCase());
+            const now = Date.now();
+            const startedSessions = testingSessions.filter((session: any) =>
+                new Date(session.date_start).getTime() <= now
+            );
+            const representativeSession = startedSessions.length > 0
+                ? startedSessions[startedSessions.length - 1]
+                : testingSessions[0];
 
-                entries.push({
-                    round: duplicateName ? meetingName : `${meetingName} — ${sessionName}`,
-                    location: meeting.location,
-                    date: session.date_start || meeting.date_start,
-                    session_key: session.session_key,
-                    meeting_key: meeting.meeting_key,
-                    year,
-                    is_testing: true,
-                    session_name: session.session_name
-                });
-            }
+            entries.push({
+                round: meeting.meeting_name || 'Pre-Season Testing',
+                location: meeting.location,
+                date: testingSessions[0]?.date_start || meeting.date_start,
+                date_end: testingSessions[testingSessions.length - 1]?.date_end || meeting.date_end,
+                session_key: representativeSession?.session_key,
+                meeting_key: meeting.meeting_key,
+                year,
+                is_testing: true,
+                session_name: representativeSession?.session_name,
+                session_count: testingSessions.length
+            });
             continue;
         }
 
