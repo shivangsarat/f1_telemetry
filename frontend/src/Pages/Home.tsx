@@ -101,8 +101,30 @@ export const Home = () => {
 
     const driverColumns = [
         { header: 'Pos', accessor: 'position', width: '12%' },
-        { header: 'Driver', accessor: 'name', width: '29%' },
-        { header: 'Team', accessor: 'team', width: '27%' },
+        {
+            header: 'Driver',
+            width: '29%',
+            accessor: (row: any) => (
+                <Link
+                    to={`/driver/${row.driver_id}`}
+                    className="text-blue-400 hover:text-blue-300 hover:underline font-bold transition"
+                >
+                    {row.name}
+                </Link>
+            )
+        },
+        {
+            header: 'Team',
+            width: '27%',
+            accessor: (row: any) => row.team_id ? (
+                <Link
+                    to={`/team/${row.team_id}`}
+                    className="text-gray-200 hover:text-blue-300 hover:underline transition"
+                >
+                    {row.team}
+                </Link>
+            ) : row.team
+        },
         { header: 'Points', accessor: 'points', width: '16%' },
         { 
             header: 'To Next',
@@ -117,7 +139,18 @@ export const Home = () => {
 
     const teamColumns = [
         { header: 'Pos', accessor: 'position', width: '12%' },
-        { header: 'Team', accessor: 'name', width: '42%' },
+        {
+            header: 'Team',
+            width: '42%',
+            accessor: (row: any) => (
+                <Link
+                    to={`/team/${row.team_id}`}
+                    className="text-blue-400 hover:text-blue-300 hover:underline font-bold transition"
+                >
+                    {row.name}
+                </Link>
+            )
+        },
         { header: 'Points', accessor: 'points', width: '20%' },
         { 
             header: 'To Next',
