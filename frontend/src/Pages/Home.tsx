@@ -290,7 +290,14 @@ export const Home = () => {
                                                     </tr>
                                                 )}
                                                 <tr className="group transition-colors hover:bg-gray-800/30">
-                                                    <td className="px-2 py-4 break-words whitespace-normal" style={{ width: '66%' }}>{race.round}</td>
+                                                    <td className="px-2 py-4 break-words whitespace-normal" style={{ width: '66%' }}>
+                                                        <Link
+                                                            to={`/race/${race.session_key}`}
+                                                            className="text-blue-400 hover:text-blue-300 hover:underline font-bold transition"
+                                                        >
+                                                            {race.round}
+                                                        </Link>
+                                                    </td>
                                                     <td className="px-2 py-4 break-words whitespace-normal" style={{ width: '34%' }}>{new Date(race.date).toLocaleDateString()}</td>
                                                 </tr>
                                             </Fragment>
