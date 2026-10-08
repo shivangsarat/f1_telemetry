@@ -547,10 +547,7 @@ export const getRaceDetails = async (sessionKey: string) => {
             availableSessions = (meetingSessionsRes.data || [])
                 .sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
 
-            if (new Date(requestedSession.date_start).getTime() > Date.now()) {
-                const past = availableSessions.filter((item: any) => new Date(item.date_start).getTime() <= Date.now());
-                if (past.length) activeSessionKey = String(past[past.length - 1].session_key);
-            }
+
         }
     }
 
@@ -581,6 +578,29 @@ export const getRaceDetails = async (sessionKey: string) => {
             );
             circuitInfo = circuitInfoRes?.data || null;
         }
+    }
+
+    const isUpcoming = Boolean(
+        sessionInfo?.date_start
+        && new Date(sessionInfo.date_start).getTime() > Date.now()
+    );
+
+    if (isUpcoming) {
+        return {
+            active_session_key: undefined,
+            isUpcoming: true,
+            isRace,
+            sessionInfo,
+            meetingInfo,
+            circuitInfo,
+            availableSessions,
+            results: [],
+            raceControl: [],
+            weather: null,
+            sessionBests: null,
+            maxRaceLap: 0,
+            scheduledTotalLaps: null
+        };
     }
 
     const scheduledTotalLaps = isRace
