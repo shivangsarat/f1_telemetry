@@ -271,6 +271,38 @@ export const DriverProfile = () => {
         ? validCompletedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, validCompletedLaps[0])
         : null;
     const sessionBests = isLive ? liveRace?.sessionBests : raceDetails?.sessionBests;
+
+    const liveLapProgress = latestTelemetry && Number.isFinite(Number(latestTelemetry.lapX))
+        ? Math.max(0, Math.min(0.999, Number(latestTelemetry.lapX) - Math.floor(Number(latestTelemetry.lapX))))
+        : 0;
+
+    const pbSectorTimes = bestLapObj ? [
+        Number(bestLapObj.duration_sector_1) || 0,
+        Number(bestLapObj.duration_sector_2) || 0,
+        Number(bestLapObj.duration_sector_3) || 0
+    ] : [0, 0, 0];
+
+    const currentSectorTimes = currentLiveLapObj ? [
+        Number(currentLiveLapObj.duration_sector_1) || 0,
+        Number(currentLiveLapObj.duration_sector_2) || 0,
+        Number(currentLiveLapObj.duration_sector_3) || 0
+    ] : [0, 0, 0];
+
+    const completedSectorCount = currentSectorTimes.reduce((count, value) => count + (value > 0 ? 1 : 0), 0);
+    const comparableCurrentSectorTime = currentSectorTimes
+        .slice(0, completedSectorCount)
+        .reduce((sum, value) => sum + value, 0);
+    const comparablePbSectorTime = pbSectorTimes
+        .slice(0, completedSectorCount)
+        .reduce((sum, value) => sum + value, 0);
+
+    const liveDeltaToPb = completedSectorCount > 0 && comparablePbSectorTime > 0
+        ? comparableCurrentSectorTime - comparablePbSectorTime
+        : null;
+
+    const projectedLapTime = bestLapObj && liveDeltaToPb !== null
+        ? Number(bestLapObj.lap_duration) + liveDeltaToPb
+        : null;
     const isSessionBestLap = (value: any) => {
         const lap = Number(value);
         const best = Number(sessionBests?.lap?.raw);
@@ -395,9 +427,31 @@ export const DriverProfile = () => {
                                     <div><span className="text-gray-500">S2:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_2 ? currentLiveLapObj.duration_sector_2.toFixed(3) : '-'}</span></div>
                                     <div><span className="text-gray-500">S3:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_3 ? currentLiveLapObj.duration_sector_3.toFixed(3) : '-'}</span></div>
                                 </div>
-                                <div className="mt-2 pt-3 border-t border-gray-800/50">
-                                    <span className="text-purple-400 text-[10px] font-bold uppercase tracking-widest block mb-1">Personal Best (L{bestLapObj?.lap_number || '-'})</span>
-                                    <span className="font-mono text-white text-lg font-bold">{bestLapObj ? formatLapTime(bestLapObj.lap_duration) : '-'}</span>
+                                <div className="mt-2 pt-3 border-t border-gray-800/50 grid grid-cols-3 gap-3">
+                                    <div>
+                                        <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Lap Progress</span>
+                                        <span className="font-mono text-white text-base font-black">
+                                            {Math.round(liveLapProgress * 100)}%
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Delta vs PB</span>
+                                        <span className={`font-mono text-base font-black ${
+                                            liveDeltaToPb === null
+                                                ? 'text-gray-500'
+                                                : liveDeltaToPb <= 0
+                                                    ? 'text-green-400'
+                                                    : 'text-red-400'
+                                        }`}>
+                                            {liveDeltaToPb === null ? '--' : `${liveDeltaToPb >= 0 ? '+' : ''}${liveDeltaToPb.toFixed(3)}s`}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Projected Lap</span>
+                                        <span className="font-mono text-white text-base font-black">
+                                            {projectedLapTime ? formatLapTime(projectedLapTime) : '--'}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                             
