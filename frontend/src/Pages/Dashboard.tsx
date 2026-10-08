@@ -78,6 +78,8 @@ export const Dashboard = () => {
     const availableSessions = isLiveSession ? (liveRace?.availableSessions || []) : (histData.availableSessions || []);
     const activeSessionInfo = isLiveSession ? liveRace?.sessionInfo : histData.sessionInfo;
     const activeMeetingInfo = isLiveSession ? liveRace?.meetingInfo : histData.meetingInfo;
+    const activeCircuitInfo = isLiveSession ? liveRace?.circuitInfo : histData.circuitInfo;
+    const isUpcoming = !isLiveSession && Boolean(histData.isUpcoming);
     const raceName =
         activeMeetingInfo?.meeting_name
         || activeSessionInfo?.meeting_name
@@ -103,6 +105,32 @@ export const Dashboard = () => {
             : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     };
     const displayedSessionClock = formatSessionClock(remainingSessionMs);
+
+    const upcomingRemainingMs = isUpcoming && Number.isFinite(sessionStartMs)
+        ? Math.max(0, sessionStartMs - sessionClockNow)
+        : 0;
+    const upcomingTotalSeconds = Math.max(0, Math.ceil(upcomingRemainingMs / 1000));
+    const countdownDays = Math.floor(upcomingTotalSeconds / 86400);
+    const countdownHours = Math.floor((upcomingTotalSeconds % 86400) / 3600);
+    const countdownMinutes = Math.floor((upcomingTotalSeconds % 3600) / 60);
+    const countdownSeconds = upcomingTotalSeconds % 60;
+
+    const upcomingLocation =
+        activeMeetingInfo?.location
+        || activeSessionInfo?.location
+        || activeMeetingInfo?.country_name
+        || activeSessionInfo?.country_name
+        || '-';
+    const upcomingCountry =
+        activeMeetingInfo?.country_name
+        || activeSessionInfo?.country_name
+        || '-';
+    const upcomingCircuit =
+        activeMeetingInfo?.circuit_short_name
+        || activeCircuitInfo?.circuit_name
+        || activeCircuitInfo?.name
+        || activeSessionInfo?.circuit_short_name
+        || '-';
 
     const raceControlEventKey = (message: any) =>
         String(
@@ -149,11 +177,20 @@ export const Dashboard = () => {
     }, [latestToast]);
 
     useEffect(() => {
-        if (isRaceMode || !isLiveSession) return;
+        const needsLiveSessionTimer = isLiveSession && !isRaceMode;
+        if (!needsLiveSessionTimer && !isUpcoming) return;
+
         setSessionClockNow(Date.now());
         const timer = window.setInterval(() => setSessionClockNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
-    }, [isRaceMode, isLiveSession, activeSessionInfo?.session_key, activeSessionInfo?.date_end]);
+    }, [
+        isRaceMode,
+        isLiveSession,
+        isUpcoming,
+        activeSessionInfo?.session_key,
+        activeSessionInfo?.date_start,
+        activeSessionInfo?.date_end
+    ]);
 
     const updateScrollTopVisibility = () => {
         const tableScrollTop = resultsScrollRef.current?.scrollTop || 0;
@@ -244,11 +281,13 @@ export const Dashboard = () => {
 
     return (
         <div className="flex min-h-screen bg-black text-white p-4 gap-6 overflow-hidden relative">
-            <RaceControlWidget
-                messages={activeRaceControl}
-                latestToast={latestToast}
-                onCloseToast={() => setLatestToast(null)}
-            />
+            {!isUpcoming && (
+                <RaceControlWidget
+                    messages={activeRaceControl}
+                    latestToast={latestToast}
+                    onCloseToast={() => setLatestToast(null)}
+                />
+            )}
 
             <div className="flex-1 flex flex-col gap-6 overflow-y-auto relative z-10">
                 <div className="flex justify-between items-center">
@@ -279,15 +318,17 @@ export const Dashboard = () => {
                                     <button
                                         key={s.session_key}
                                         onClick={() => navigate(`/race/${s.session_key}`)}
-                                        disabled={isFuture}
+                                        disabled={isFuture && !isUpcoming}
                                         className={`px-4 py-2 text-xs font-bold tracking-widest rounded-md transition-all ${
                                             isActive 
                                                 ? isLiveSession
                                                     ? 'bg-green-600/20 text-green-300 border border-green-500/40 shadow-lg'
                                                     : 'bg-red-600 text-white shadow-lg'
-                                                : isFuture
+                                                : isFuture && !isUpcoming
                                                     ? 'text-gray-700 cursor-not-allowed opacity-50'
-                                                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                                                    : isFuture
+                                                        ? 'text-blue-300 hover:text-white hover:bg-blue-500/10 border border-blue-500/20'
+                                                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
                                         }`}
                                     >
                                         {s.session_name.toUpperCase()}
@@ -333,34 +374,151 @@ export const Dashboard = () => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <WeatherCard weather={activeWeather} />
-                    <SessionBestsCard bests={activeBests} />
-                </div>
+                {isUpcoming ? (
+                    <div className="flex-1 flex flex-col gap-6">
+                        <div className="bg-gray-900 rounded-xl border border-blue-500/20 shadow-2xl overflow-hidden">
+                            <div className="px-6 py-5 border-b border-gray-800 flex items-center justify-between gap-4 flex-wrap">
+                                <div>
+                                    <div className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-400 mb-1">
+                                        Upcoming {activeSessionName || 'Session'}
+                                    </div>
+                                    <h2 className="text-2xl font-black uppercase tracking-wide text-white">{raceName}</h2>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Starts in</div>
+                                    <div className="font-mono text-sm font-black text-blue-300 mt-1">
+                                        {countdownDays}d {String(countdownHours).padStart(2, '0')}h {String(countdownMinutes).padStart(2, '0')}m {String(countdownSeconds).padStart(2, '0')}s
+                                    </div>
+                                </div>
+                            </div>
 
-                {isLiveSession && (
-                    <LiveTrackerWidget
-                        tracker={liveRace?.tracker}
-                        sessionKey={sessionKey}
-                        sticky
-                        defaultMinimized
-                    />
-                )}
+                            <div className="p-6">
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                                    <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+                                        <div className="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Location</div>
+                                        <div className="font-bold text-white">{upcomingLocation}</div>
+                                    </div>
+                                    <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+                                        <div className="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Country</div>
+                                        <div className="font-bold text-white">{upcomingCountry}</div>
+                                    </div>
+                                    <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+                                        <div className="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Circuit</div>
+                                        <div className="font-bold text-white">{upcomingCircuit}</div>
+                                    </div>
+                                    <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-4">
+                                        <div className="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">Your Local Start</div>
+                                        <div className="font-mono font-bold text-white">
+                                            {Number.isFinite(sessionStartMs)
+                                                ? new Date(sessionStartMs).toLocaleString(undefined, {
+                                                    weekday: 'short',
+                                                    day: '2-digit',
+                                                    month: 'short',
+                                                    year: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })
+                                                : '-'}
+                                        </div>
+                                    </div>
+                                </div>
 
-                <div className="bg-gray-900 rounded-xl border border-gray-800 flex-1 flex flex-col overflow-hidden shadow-2xl">
-                    <div ref={resultsScrollRef} onScroll={handleResultsScroll} className="overflow-y-auto flex-1 custom-scrollbar relative pb-24">
-                        {(isLiveSession ? !liveRace : histData.loading) ? (
-                            <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
-                        ) : (
-                            <Table 
-                                data={activeResults || []} 
-                                columns={driverColumns} 
-                                getRowKey={(row: any) => row.driver_number}
-                                expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={undefined} />}
-                            />
+                                <div className="rounded-xl border border-gray-800 bg-gray-950/30 p-6">
+                                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-5">
+                                        Countdown to {activeSessionName || 'session'} start
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-3">
+                                        {[
+                                            ['Days', countdownDays],
+                                            ['Hours', countdownHours],
+                                            ['Minutes', countdownMinutes],
+                                            ['Seconds', countdownSeconds]
+                                        ].map(([label, value]) => (
+                                            <div key={String(label)} className="rounded-lg border border-gray-800 bg-gray-900 p-4 text-center">
+                                                <div className="font-mono text-3xl md:text-4xl font-black text-white tabular-nums">
+                                                    {String(value).padStart(2, '0')}
+                                                </div>
+                                                <div className="mt-2 text-[9px] font-bold uppercase tracking-widest text-gray-500">
+                                                    {label}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {availableSessions.length > 0 && (
+                            <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
+                                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-4">Weekend / Event Schedule</div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {availableSessions.map((session: any) => {
+                                        const start = new Date(session.date_start).getTime();
+                                        const selected = String(session.session_key) === String(sessionKey);
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={session.session_key}
+                                                onClick={() => navigate(`/race/${session.session_key}`)}
+                                                className={`text-left rounded-lg border p-4 transition ${
+                                                    selected
+                                                        ? 'border-blue-500/50 bg-blue-500/10'
+                                                        : 'border-gray-800 bg-gray-950/30 hover:border-gray-700 hover:bg-gray-800/50'
+                                                }`}
+                                            >
+                                                <div className={`text-xs font-black uppercase tracking-wider ${selected ? 'text-blue-300' : 'text-gray-200'}`}>
+                                                    {session.session_name || session.session_type || 'Session'}
+                                                </div>
+                                                <div className="mt-2 text-[10px] font-mono text-gray-500">
+                                                    {Number.isFinite(start)
+                                                        ? new Date(start).toLocaleString(undefined, {
+                                                            weekday: 'short',
+                                                            day: '2-digit',
+                                                            month: 'short',
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                        })
+                                                        : '-'}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
                         )}
                     </div>
-                </div>
+                ) : (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <WeatherCard weather={activeWeather} />
+                            <SessionBestsCard bests={activeBests} />
+                        </div>
+
+                        {isLiveSession && (
+                            <LiveTrackerWidget
+                                tracker={liveRace?.tracker}
+                                sessionKey={sessionKey}
+                                sticky
+                                defaultMinimized
+                            />
+                        )}
+
+                        <div className="bg-gray-900 rounded-xl border border-gray-800 flex-1 flex flex-col overflow-hidden shadow-2xl">
+                            <div ref={resultsScrollRef} onScroll={handleResultsScroll} className="overflow-y-auto flex-1 custom-scrollbar relative pb-24">
+                                {(isLiveSession ? !liveRace : histData.loading) ? (
+                                    <div className="p-10 text-center text-gray-500 animate-pulse">Fetching Session Data...</div>
+                                ) : (
+                                    <Table 
+                                        data={activeResults || []} 
+                                        columns={driverColumns} 
+                                        getRowKey={(row: any) => row.driver_number}
+                                        expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={undefined} />}
+                                    />
+                                )}
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
 
             {showScrollTop && !scrollTopDismissed && (
