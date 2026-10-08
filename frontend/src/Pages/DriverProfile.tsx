@@ -276,32 +276,23 @@ export const DriverProfile = () => {
         ? Math.max(0, Math.min(0.999, Number(latestTelemetry.lapX) - Math.floor(Number(latestTelemetry.lapX))))
         : 0;
 
-    const pbSectorTimes = bestLapObj ? [
-        Number(bestLapObj.duration_sector_1) || 0,
-        Number(bestLapObj.duration_sector_2) || 0,
-        Number(bestLapObj.duration_sector_3) || 0
-    ] : [0, 0, 0];
-
-    const currentSectorTimes = currentLiveLapObj ? [
-        Number(currentLiveLapObj.duration_sector_1) || 0,
-        Number(currentLiveLapObj.duration_sector_2) || 0,
-        Number(currentLiveLapObj.duration_sector_3) || 0
-    ] : [0, 0, 0];
-
-    const completedSectorCount = currentSectorTimes.reduce((count, value) => count + (value > 0 ? 1 : 0), 0);
-    const comparableCurrentSectorTime = currentSectorTimes
-        .slice(0, completedSectorCount)
-        .reduce((sum, value) => sum + value, 0);
-    const comparablePbSectorTime = pbSectorTimes
-        .slice(0, completedSectorCount)
-        .reduce((sum, value) => sum + value, 0);
-
-    const liveDeltaToPb = completedSectorCount > 0 && comparablePbSectorTime > 0
-        ? comparableCurrentSectorTime - comparablePbSectorTime
+    const latestTelemetryTime = latestTelemetry?.date ? new Date(latestTelemetry.date).getTime() : NaN;
+    const currentLapStartTime = currentLiveLapObj?.date_start ? new Date(currentLiveLapObj.date_start).getTime() : NaN;
+    const elapsedCurrentLap = Number.isFinite(latestTelemetryTime) && Number.isFinite(currentLapStartTime)
+        ? Math.max(0, (latestTelemetryTime - currentLapStartTime) / 1000)
         : null;
 
-    const projectedLapTime = bestLapObj && liveDeltaToPb !== null
-        ? Number(bestLapObj.lap_duration) + liveDeltaToPb
+    // Update continuously from every telemetry sample rather than only when a
+    // sector closes. lapX is already refreshed at car-data frequency, so use the
+    // current fractional lap progress as the live comparison point against PB.
+    const liveDeltaToPb = bestLapObj
+        && elapsedCurrentLap !== null
+        && liveLapProgress > 0.01
+        ? elapsedCurrentLap - (Number(bestLapObj.lap_duration) * liveLapProgress)
+        : null;
+
+    const projectedLapTime = elapsedCurrentLap !== null && liveLapProgress > 0.05
+        ? elapsedCurrentLap / liveLapProgress
         : null;
     const isSessionBestLap = (value: any) => {
         const lap = Number(value);
