@@ -486,18 +486,30 @@ export const getHomeData = async () => {
 
     const driversData = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings || [];
     const drivers = driversData.map((d: any, idx: number) => ({
-        position: d.position, 
-        name: `${d.Driver.givenName} ${d.Driver.familyName}`, 
-        team: d.Constructors[0]?.name, 
+        position: d.position,
+        driver_id: d.Driver.driverId,
+        permanent_number: d.Driver.permanentNumber,
+        code: d.Driver.code,
+        given_name: d.Driver.givenName,
+        family_name: d.Driver.familyName,
+        name: `${d.Driver.givenName} ${d.Driver.familyName}`,
+        nationality: d.Driver.nationality,
+        date_of_birth: d.Driver.dateOfBirth,
+        team_id: d.Constructors[0]?.constructorId,
+        team: d.Constructors[0]?.name,
         points: d.points,
+        wins: d.wins,
         diff_to_next: idx === 0 ? '-' : `-${Number(driversData[idx-1].points) - Number(d.points)}`
     }));
 
     const teamsData = teamsRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.ConstructorStandings || [];
     const teams = teamsData.map((t: any, idx: number) => ({
-        position: t.position, 
-        name: t.Constructor.name, 
+        position: t.position,
+        team_id: t.Constructor.constructorId,
+        name: t.Constructor.name,
+        nationality: t.Constructor.nationality,
         points: t.points,
+        wins: t.wins,
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
@@ -522,6 +534,127 @@ export const getHomeData = async () => {
     const seasonMeta = getAvailableSeasons();
 
     return { drivers, teams, pastRaces, upcomingRaces, nextYearRaces, liveStatus, seasonMeta };
+};
+
+export const getDriverSeasonProfile = async (driverId: string) => {
+    const safeId = encodeURIComponent(driverId);
+    const [standingsRes, resultsRes] = await Promise.all([
+        getCached(
+            `driver_profile_standings_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/drivers/${safeId}/driverStandings.json`)
+        ),
+        getCached(
+            `driver_profile_results_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/drivers/${safeId}/results.json`)
+        )
+    ]);
+
+    const standings = standingsRes?.data?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0] || null;
+    const races = resultsRes?.data?.MRData?.RaceTable?.Races || [];
+    const driver = standings?.Driver || races?.[0]?.Results?.[0]?.Driver || null;
+    const constructor = standings?.Constructors?.[0] || races?.[0]?.Results?.[0]?.Constructor || null;
+
+    return {
+        season: Number(standingsRes?.data?.MRData?.StandingsTable?.season || new Date().getFullYear()),
+        driver: driver ? {
+            id: driver.driverId,
+            permanent_number: driver.permanentNumber,
+            code: driver.code,
+            given_name: driver.givenName,
+            family_name: driver.familyName,
+            name: `${driver.givenName || ''} ${driver.familyName || ''}`.trim(),
+            nationality: driver.nationality,
+            date_of_birth: driver.dateOfBirth
+        } : null,
+        team: constructor ? {
+            id: constructor.constructorId,
+            name: constructor.name,
+            nationality: constructor.nationality
+        } : null,
+        standing: standings ? {
+            position: Number(standings.position),
+            points: Number(standings.points),
+            wins: Number(standings.wins)
+        } : null,
+        races: races.map((race: any) => {
+            const result = race.Results?.[0] || {};
+            return {
+                round: Number(race.round),
+                race_name: race.raceName,
+                date: race.date,
+                position: result.position,
+                grid: result.grid,
+                points: Number(result.points || 0),
+                status: result.status,
+                laps: Number(result.laps || 0),
+                fastest_lap_rank: result.FastestLap?.rank || null,
+                fastest_lap_time: result.FastestLap?.Time?.time || null
+            };
+        })
+    };
+};
+
+export const getTeamSeasonProfile = async (constructorId: string) => {
+    const safeId = encodeURIComponent(constructorId);
+    const [standingsRes, resultsRes, driversRes] = await Promise.all([
+        getCached(
+            `team_profile_standings_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/constructors/${safeId}/constructorStandings.json`)
+        ),
+        getCached(
+            `team_profile_results_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/constructors/${safeId}/results.json`)
+        ),
+        getCached(
+            `team_profile_drivers_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/constructors/${safeId}/drivers.json`)
+        )
+    ]);
+
+    const standing = standingsRes?.data?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings?.[0] || null;
+    const constructor = standing?.Constructor || null;
+    const races = resultsRes?.data?.MRData?.RaceTable?.Races || [];
+    const drivers = driversRes?.data?.MRData?.DriverTable?.Drivers || [];
+
+    return {
+        season: Number(standingsRes?.data?.MRData?.StandingsTable?.season || new Date().getFullYear()),
+        team: constructor ? {
+            id: constructor.constructorId,
+            name: constructor.name,
+            nationality: constructor.nationality
+        } : null,
+        standing: standing ? {
+            position: Number(standing.position),
+            points: Number(standing.points),
+            wins: Number(standing.wins)
+        } : null,
+        drivers: drivers.map((driver: any) => ({
+            id: driver.driverId,
+            permanent_number: driver.permanentNumber,
+            code: driver.code,
+            name: `${driver.givenName || ''} ${driver.familyName || ''}`.trim(),
+            nationality: driver.nationality
+        })),
+        races: races.map((race: any) => ({
+            round: Number(race.round),
+            race_name: race.raceName,
+            date: race.date,
+            results: (race.Results || []).map((result: any) => ({
+                driver_id: result.Driver?.driverId,
+                driver_name: `${result.Driver?.givenName || ''} ${result.Driver?.familyName || ''}`.trim(),
+                position: result.position,
+                grid: result.grid,
+                points: Number(result.points || 0),
+                status: result.status,
+                laps: Number(result.laps || 0)
+            }))
+        }))
+    };
 };
 
 export const getRaceDetails = async (sessionKey: string) => {
