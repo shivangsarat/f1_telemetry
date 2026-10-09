@@ -5,80 +5,182 @@ import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
 import { getCurrentLiveSession, getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
+import { BroadcastSyncHub } from './BroadcastSyncHub';
 
 export const setupWebSocket = async (server: any) => {
-    // Attach WebSocket handling immediately. Provider/bootstrap initialization may
-    // take time, but browser connections and driver subscription intents should
-    // never be lost while the live provider is coming online.
     const wss = new WebSocketServer({ server });
     const engine = new LiveSessionEngine();
 
+    // One centralized presentation timeline owns delay for race state, tracker
+    // state, driver state and telemetry. Individual pages do not schedule their
+    // own timers and no message creates its own setTimeout.
+    const syncHub = new BroadcastSyncHub(130_000, 250);
     const clientDriverSubs = new Map<WebSocket, Set<number>>();
-    const clientUnsubscribers = new Map<WebSocket, Map<number, () => void>>();
+    const configuredClients = new Set<WebSocket>();
+    const driverStateSubscriptions = new Map<number, () => void>();
 
     let provider: ITelemetryProvider | null = null;
     let providerReady = false;
     let engineBroadcastBound = false;
     let lapCountSessionKey: string | null = null;
 
-    const broadcastSnapshot = () => {
-        const payload = JSON.stringify(engine.getSnapshot());
-        wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(payload);
+    const sendImmediate = (client: WebSocket, message: any) => {
+        if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(message));
+    };
+
+    const delayedDriverInfo = (targetMs: number, driver: number) => {
+        const raceEntry = syncHub.getRaceAtOrBefore(targetMs);
+        return raceEntry?.message?.data?.results?.find(
+            (result: any) => Number(result.driver_number) === driver
+        ) || null;
+    };
+
+    const sendDriverBootstrap = (client: WebSocket, driver: number) => {
+        if (client.readyState !== WebSocket.OPEN) return;
+
+        const targetMs = syncHub.getPresentationTime(client);
+        const snapshot = engine.getDriverSnapshotAt(driver, true, targetMs);
+        const driverAtCutoff = delayedDriverInfo(targetMs, driver);
+
+        sendImmediate(client, {
+            ...snapshot,
+            timestamp: targetMs,
+            data: {
+                ...snapshot.data,
+                driver: driverAtCutoff || snapshot.data?.driver || null
+            }
         });
+    };
+
+    const sendRaceBootstrap = (client: WebSocket) => {
+        if (client.readyState !== WebSocket.OPEN) return;
+
+        const targetMs = syncHub.getPresentationTime(client);
+        const buffered = syncHub.getRaceAtOrBefore(targetMs);
+        const current = engine.getSnapshot();
+        const base = buffered?.message || current;
+
+        // The hub deliberately strips the static trace from buffered frames.
+        // Reconstruct it once at the presentation cutoff for race, mini-map and
+        // full tracker pages; subsequent compact frames preserve it client-side.
+        sendImmediate(client, {
+            ...base,
+            timestamp: targetMs,
+            data: {
+                ...(base?.data || current?.data || {}),
+                tracker: engine.getTrackerSnapshotAt(targetMs)
+            }
+        });
+    };
+
+    const bootstrapClient = (client: WebSocket) => {
+        sendRaceBootstrap(client);
+        for (const driver of syncHub.getSubscribedDrivers(client)) {
+            sendDriverBootstrap(client, driver);
+        }
+    };
+
+    const broadcastSnapshot = () => {
+        syncHub.recordRace(engine.getSnapshot());
     };
 
     const attachEngineBroadcast = () => {
         if (engineBroadcastBound) return;
         engineBroadcastBound = true;
+
         engine.subscribe(snapshot => {
-            const payload = JSON.stringify(snapshot);
-            wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) client.send(payload);
-            });
+            syncHub.recordRace(snapshot);
+        });
+
+        // Paid OpenF1 car_data is ingested for every driver, so this listener
+        // continuously warms the telemetry history before a driver page opens.
+        engine.subscribeTelemetry(payload => {
+            syncHub.recordTelemetry(payload);
         });
     };
 
-    const ensureDriverEngineSubscription = (ws: WebSocket, driver: number) => {
-        const unsubscribers = clientUnsubscribers.get(ws);
-        if (!unsubscribers || unsubscribers.has(driver)) return;
+    const ensureDriverStateSubscription = (driver: number) => {
+        if (driverStateSubscriptions.has(driver)) return;
 
         const unsubscribe = engine.subscribeDriver(driver, payload => {
-            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+            // Telemetry is recorded by subscribeTelemetry above. This listener is
+            // only for lower-frequency lap/stint/driver snapshots.
+            if (payload?.type === 'LIVE_DRIVER_STATE') {
+                syncHub.recordDriverState(payload);
+            }
         });
-        unsubscribers.set(driver, unsubscribe);
+        driverStateSubscriptions.set(driver, unsubscribe);
     };
+
+    const releaseDriverStateSubscriptionIfUnused = (driver: number) => {
+        const stillUsed = Array.from(clientDriverSubs.values()).some(set => set.has(driver));
+        if (stillUsed) return;
+
+        driverStateSubscriptions.get(driver)?.();
+        driverStateSubscriptions.delete(driver);
+
+        if (providerReady && provider) provider.unsubscribeDriver(driver);
+    };
+
+    // A single scheduler advances every connected browser along the same source
+    // timeline. Delay changes reset cursors; they never create per-event timers.
+    const presentationTimer = setInterval(() => {
+        syncHub.flush();
+    }, 100);
+    presentationTimer.unref?.();
 
     wss.on('connection', ws => {
         clientDriverSubs.set(ws, new Set());
-        clientUnsubscribers.set(ws, new Map());
+        syncHub.registerClient(ws);
 
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(engine.getSnapshot()));
-        }
+        // New clients normally configure delay immediately in WebSocket.onopen.
+        // Keep a small compatibility fallback so an older frontend still starts.
+        const bootstrapFallback = setTimeout(() => {
+            if (configuredClients.has(ws) || ws.readyState !== WebSocket.OPEN) return;
+            syncHub.configureDelay(ws, 0);
+            bootstrapClient(ws);
+        }, 750);
 
         ws.on('message', raw => {
             try {
                 const message = JSON.parse(raw.toString());
                 const driver = Number(message.driver);
 
+                if (message.type === 'SET_BROADCAST_DELAY') {
+                    const seconds = Math.max(0, Math.min(120, Number(message.seconds) || 0));
+                    configuredClients.add(ws);
+                    clearTimeout(bootstrapFallback);
+
+                    syncHub.configureDelay(ws, seconds);
+                    sendImmediate(ws, {
+                        type: 'BROADCAST_DELAY_APPLIED',
+                        seconds
+                    });
+                    bootstrapClient(ws);
+                    return;
+                }
+
                 if ((message.type === 'SUBSCRIBE_DRIVER' || message.type === 'SUBSCRIBE_TELEMETRY') && Number.isFinite(driver)) {
                     const subs = clientDriverSubs.get(ws)!;
                     if (subs.has(driver)) return;
 
                     subs.add(driver);
-                    ensureDriverEngineSubscription(ws, driver);
+                    syncHub.subscribeDriver(ws, driver);
+                    ensureDriverStateSubscription(driver);
+
+                    // Start this page immediately at T-delay. Because telemetry is
+                    // globally buffered, the 100 ms presentation loop can continue
+                    // from this point without waiting the configured delay again.
+                    sendDriverBootstrap(ws, driver);
 
                     if (providerReady && provider) provider.subscribeDriver(driver);
+                    return;
                 }
 
                 if ((message.type === 'UNSUBSCRIBE_DRIVER' || message.type === 'UNSUBSCRIBE_TELEMETRY') && Number.isFinite(driver)) {
                     clientDriverSubs.get(ws)?.delete(driver);
-                    clientUnsubscribers.get(ws)?.get(driver)?.();
-                    clientUnsubscribers.get(ws)?.delete(driver);
-
-                    const stillUsed = Array.from(clientDriverSubs.values()).some(set => set.has(driver));
-                    if (!stillUsed && providerReady && provider) provider.unsubscribeDriver(driver);
+                    syncHub.unsubscribeDriver(ws, driver);
+                    releaseDriverStateSubscriptionIfUnused(driver);
                 }
             } catch (error) {
                 console.error('Error handling WebSocket message:', error);
@@ -86,15 +188,15 @@ export const setupWebSocket = async (server: any) => {
         });
 
         ws.on('close', () => {
-            const subs = clientDriverSubs.get(ws);
-            const unsubscribers = clientUnsubscribers.get(ws);
-            clientDriverSubs.delete(ws);
-            clientUnsubscribers.delete(ws);
+            clearTimeout(bootstrapFallback);
+            configuredClients.delete(ws);
 
-            for (const driver of subs || []) {
-                unsubscribers?.get(driver)?.();
-                const stillUsed = Array.from(clientDriverSubs.values()).some(set => set.has(driver));
-                if (!stillUsed && providerReady && provider) provider.unsubscribeDriver(driver);
+            const subs = clientDriverSubs.get(ws) || new Set<number>();
+            clientDriverSubs.delete(ws);
+            syncHub.unregisterClient(ws);
+
+            for (const driver of subs) {
+                releaseDriverStateSubscriptionIfUnused(driver);
             }
         });
     });
@@ -185,16 +287,17 @@ export const setupWebSocket = async (server: any) => {
             }
         },
         onTelemetry: (driverNumber, point) => {
+            // FreeFastF1 delivers telemetry outside the engine's car_data topic,
+            // so feed it into the same centralized presentation buffer here.
             if (CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
-                for (const [ws, subs] of clientDriverSubs) {
-                    if (ws.readyState === WebSocket.OPEN && subs.has(driverNumber)) {
-                        ws.send(JSON.stringify({
-                            type: 'LIVE_TELEMETRY_POINT',
-                            driver: driverNumber,
-                            data: point
-                        }));
-                    }
-                }
+                const snapshot = engine.getSnapshot();
+                syncHub.recordTelemetry({
+                    type: 'LIVE_TELEMETRY_POINT',
+                    sessionKey: snapshot?.sessionKey ?? null,
+                    timestamp: Date.now(),
+                    driver: driverNumber,
+                    data: point
+                });
             }
         },
         onError: err => console.error(`[${provider?.name || 'Live Provider'} Error]:`, err?.message || err)
@@ -203,7 +306,6 @@ export const setupWebSocket = async (server: any) => {
     providerReady = true;
 
     // Driver subscriptions can arrive before provider initialization completes.
-    // Apply all queued intents now so telemetry starts without a browser reload.
     const activeDrivers = new Set<number>();
     for (const subs of clientDriverSubs.values()) {
         for (const driver of subs) activeDrivers.add(driver);
@@ -213,10 +315,8 @@ export const setupWebSocket = async (server: any) => {
     broadcastSnapshot();
     console.log(`🏎️ [Live Engine] Backend WebSocket state stream ready using ${provider.name}`);
 
-    // MQTT only pushes future events; if the backend was already running before
-    // a session started, there is no guarantee that a fresh sessions message is
-    // replayed. Re-resolve the active session periodically so /live rolls over
-    // automatically without a backend/browser restart.
+    // MQTT only pushes future events; periodically re-resolve the active session
+    // so /live rolls over without requiring a restart.
     if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
         setInterval(() => {
             void hydrateCurrentSession(false);
