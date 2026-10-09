@@ -136,9 +136,25 @@ export const setupWebSocket = async (server: any) => {
                         sessionKey: clientDelaySessionKey.get(ws)
                     }, true);
 
+                    const trackerCutoffMs = seconds > 0
+                        ? Date.now() - (seconds * 1000)
+                        : undefined;
+
+                    // The full tracker page can be opened after Broadcast Sync is
+                    // already configured. Bootstrap it immediately at T-delay so
+                    // it does not first show realtime positions and then appear
+                    // frozen while the delayed stream fills.
+                    sendClient(ws, {
+                        type: 'LIVE_TRACKER_STATE',
+                        sessionKey: clientDelaySessionKey.get(ws)
+                            || (engine.getSnapshot()?.sessionKey != null ? String(engine.getSnapshot().sessionKey) : null),
+                        timestamp: Date.now(),
+                        data: engine.getTrackerSnapshotAt(trackerCutoffMs)
+                    }, true);
+
                     // With no delay this catches the UI up immediately. When a
-                    // delay is enabled, this snapshot/driver state becomes the
-                    // first item on the delayed presentation timeline.
+                    // delay is enabled, future race/tracker updates continue on
+                    // the normal delayed presentation timeline.
                     sendCurrentClientState(ws);
                     return;
                 }
