@@ -686,8 +686,28 @@ export class LiveSessionEngine {
                 : '-';
         });
 
+        const leaderResult = ranked.find((result: any) => {
+            const best = Number(result.best_lap_raw);
+            return Number.isFinite(best) && best > 0;
+        });
+
+        const sessionBests = {
+            ...(calculated.sessionBests || {}),
+            lap: leaderResult
+                ? {
+                    time: leaderResult.best_lap,
+                    raw: Number(leaderResult.best_lap_raw),
+                    driver: leaderResult.name_acronym
+                        || leaderResult.acronym
+                        || leaderResult.name
+                        || String(leaderResult.driver_number)
+                }
+                : calculated.sessionBests?.lap
+        };
+
         return {
             ...calculated,
+            sessionBests,
             results: ranked
         };
     }
