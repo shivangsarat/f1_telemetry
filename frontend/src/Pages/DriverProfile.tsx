@@ -399,12 +399,14 @@ export const DriverProfile = () => {
                                 {(isRaceMode || (isLive && !isRaceMode)) && (
                                     <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
                                         <div>
-                                            <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
-                                            <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentLiveLapObj?.lap_duration) ? 'text-purple-400' : 'text-white'}`}>
-                                                {(currentDriverInfo.last_lap === '-' && (isLive && !isRaceMode)) ? 'In Progress' : currentDriverInfo.last_lap}
+                                            <span className="font-bold text-gray-400 block mb-1">Last Lap:</span> 
+                                            <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentDriverInfo?.last_lap_raw) ? 'text-purple-400' : 'text-white'}`}>
+                                                {currentDriverInfo.last_lap || '-'}
                                             </span>
                                         </div>
-                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} sessionBests={sessionBests} />}
+                                        {currentDriverInfo.last_sectors && (
+                                            <SectorBlock sectors={currentDriverInfo.last_sectors} sessionBests={sessionBests} />
+                                        )}
                                     </div>
                                 )}
                             </div>
