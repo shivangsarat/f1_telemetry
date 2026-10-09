@@ -347,17 +347,14 @@ export const Dashboard = () => {
                                     <button
                                         key={s.session_key}
                                         onClick={() => navigate(`/race/${s.session_key}`)}
-                                        disabled={isFuture && !isUpcoming}
                                         className={`px-4 py-2 text-xs font-bold tracking-widest rounded-md transition-all ${
                                             isActive 
                                                 ? isLiveSession
                                                     ? 'bg-green-600/20 text-green-300 border border-green-500/40 shadow-lg'
                                                     : 'bg-red-600 text-white shadow-lg'
-                                                : isFuture && !isUpcoming
-                                                    ? 'text-gray-700 cursor-not-allowed opacity-50'
-                                                    : isFuture
-                                                        ? 'text-blue-300 hover:text-white hover:bg-blue-500/10 border border-blue-500/20'
-                                                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                                                : isFuture
+                                                    ? 'text-blue-300 hover:text-white hover:bg-blue-500/10 border border-blue-500/20'
+                                                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
                                         }`}
                                     >
                                         {s.session_name.toUpperCase()}
