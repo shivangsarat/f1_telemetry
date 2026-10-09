@@ -197,6 +197,22 @@ export const Dashboard = () => {
         activeSessionInfo?.date_end
     ]);
 
+    useEffect(() => {
+        if (!isUpcoming || !Number.isFinite(sessionStartMs)) return;
+
+        const now = Date.now();
+        if (now < sessionStartMs) return;
+
+        const withinScheduledSession = !Number.isFinite(sessionEndMs) || now <= sessionEndMs;
+        if (!withinScheduledSession) return;
+
+        // Once a future-session countdown reaches zero, switch to the canonical
+        // live route. The live backend will resolve/hydrate the session that is
+        // actually active, so the user does not remain on the stale numeric
+        // countdown page after the session begins.
+        navigate('/race/live', { replace: true });
+    }, [isUpcoming, sessionStartMs, sessionEndMs, sessionClockNow, navigate]);
+
     const updateScrollTopVisibility = () => {
         const tableScrollTop = resultsScrollRef.current?.scrollTop || 0;
         const pageScrollTop = window.scrollY || document.documentElement.scrollTop || 0;
