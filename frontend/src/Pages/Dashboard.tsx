@@ -249,7 +249,14 @@ export const Dashboard = () => {
         },
         { 
             header: 'Interval', 
-            accessor: (row: any) => <span className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}>{row.interval}</span> 
+            accessor: (row: any) => (
+                <span
+                    className={`font-mono ${row.status === 'DNF' || row.status === 'DNS' ? 'text-gray-500' : 'text-gray-300'}`}
+                    title={row.interval_estimated ? 'Estimated from available timing data' : 'OpenF1 timing'}
+                >
+                    {row.interval_estimated && row.interval !== '-' ? '~' : ''}{row.interval}
+                </span>
+            )
         },
         { 
             header: isRaceMode ? 'Gap' : 'Gap to P1', 
@@ -259,8 +266,11 @@ export const Dashboard = () => {
 
                 return (
                     <div className="flex items-center justify-between w-full pr-4">
-                        <span className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}>
-                            {row.gap_to_leader}
+                        <span
+                            className={`font-mono ${isRetired ? 'text-gray-500' : 'text-gray-300'}`}
+                            title={row.gap_estimated ? 'Estimated from completed-lap timing' : 'OpenF1 timing'}
+                        >
+                            {row.gap_estimated && row.gap_to_leader !== '-' ? '~' : ''}{row.gap_to_leader}
                         </span>
                         
                         {!isRetired && currentStint ? (
