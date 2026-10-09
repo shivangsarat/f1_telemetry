@@ -87,6 +87,9 @@ export const DriverProfile = () => {
     const brakeRef = useRef<HTMLSpanElement>(null);
     const gearRef = useRef<HTMLSpanElement>(null);
 
+    const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
+    const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
+
     const processedData = (isLive ? liveData : histPayload).telemetry;
     const processedDataRef = useRef(processedData);
     useEffect(() => { processedDataRef.current = processedData; }, [processedData]);
@@ -291,7 +294,6 @@ export const DriverProfile = () => {
     const hasEnoughDataToScroll = maxLapX > VIEWPORT_LAPS;
 
     
-    const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
     const isRaceMode = isLive ? Boolean(liveRace?.isRace) : Boolean(raceDetails?.isRace);
     const activeSessionInfo = isLive ? liveRace?.sessionInfo : raceDetails?.sessionInfo;
     const activeMeetingInfo = isLive ? liveRace?.meetingInfo : raceDetails?.meetingInfo;
@@ -300,8 +302,6 @@ export const DriverProfile = () => {
         || activeSessionInfo?.meeting_name
         || (activeSessionInfo?.location ? `${activeSessionInfo.location} Grand Prix` : 'Grand Prix');
     const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
-
-    const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
     const scheduledTotalLaps = Number(
         isLive ? liveRace?.scheduledTotalLaps : raceDetails?.scheduledTotalLaps
