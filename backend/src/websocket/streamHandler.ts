@@ -93,7 +93,7 @@ export const setupWebSocket = async (server: any) => {
 
         const unsubscribe = engine.subscribeDriver(driver, payload => {
             sendClient(ws, payload);
-        });
+        }, false);
         unsubscribers.set(driver, unsubscribe);
     };
 
@@ -148,6 +148,21 @@ export const setupWebSocket = async (server: any) => {
                     if (subs.has(driver)) return;
 
                     subs.add(driver);
+
+                    const delayMs = Math.max(0, clientDelayMs.get(ws) || 0);
+                    const cutoffMs = delayMs > 0 ? Date.now() - delayMs : undefined;
+
+                    // A driver route may be opened after Broadcast Sync is already
+                    // active. Do not make that page sit empty for the full delay
+                    // window. The engine already retains raw car/lap/location
+                    // history, so bootstrap the page immediately at T-delay, then
+                    // continue with normally delayed live updates.
+                    sendClient(
+                        ws,
+                        engine.getDriverSnapshot(driver, true, cutoffMs),
+                        true
+                    );
+
                     ensureDriverEngineSubscription(ws, driver);
 
                     if (providerReady && provider) provider.subscribeDriver(driver);
