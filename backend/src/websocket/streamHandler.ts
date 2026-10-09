@@ -106,7 +106,13 @@ export const setupWebSocket = async (server: any) => {
             // Telemetry is recorded by subscribeTelemetry above. This listener is
             // only for lower-frequency lap/stint/driver snapshots.
             if (payload?.type === 'LIVE_DRIVER_STATE') {
-                syncHub.recordDriverState(payload);
+                syncHub.recordDriverState({
+                    ...payload,
+                    data: {
+                        ...payload.data,
+                        telemetry: undefined
+                    }
+                });
             }
         });
         driverStateSubscriptions.set(driver, unsubscribe);
@@ -127,7 +133,9 @@ export const setupWebSocket = async (server: any) => {
     const presentationTimer = setInterval(() => {
         syncHub.flush();
     }, 100);
-    presentationTimer.unref?.();
+    if (typeof (presentationTimer as any).unref === 'function') {
+        (presentationTimer as any).unref();
+    }
 
     wss.on('connection', ws => {
         clientDriverSubs.set(ws, new Set());
