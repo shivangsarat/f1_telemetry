@@ -857,8 +857,13 @@ export const getRaceControl = async (sessionKey: string) => {
     return (res?.data || []).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
 };
 
-export const getCleanTelemetry = async (sessionKey: string, driverNumber: number, sinceTimestamp?: string) => {
-    const ttl = sessionKey === 'latest' ? 1000 : 86400000;
+export const getCleanTelemetry = async (
+    sessionKey: string,
+    driverNumber: number,
+    sinceTimestamp?: string,
+    live = false
+) => {
+    const ttl = live || sessionKey === 'latest' ? 1000 : 86400000;
     const timeFilter = sinceTimestamp ? `&date>=${sinceTimestamp}` : '';
     
     const [laps, carData, stints, locations] = await Promise.all([
