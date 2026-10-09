@@ -362,7 +362,15 @@ const calculateProjectedChampionship = (drivers: any[], championship: any[], isS
 };
 
 export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], locations: any[] = []) => {
-    const orderedLaps = [...laps].sort((a, b) => num(a.lap_number) - num(b.lap_number));
+    const telemetryDriverNumber = carData
+        .map((row: any) => Number(row?.driver_number))
+        .find((driverNumber: number) => Number.isFinite(driverNumber));
+
+    const driverLaps = Number.isFinite(telemetryDriverNumber)
+        ? laps.filter((lap: any) => Number(lap?.driver_number) === telemetryDriverNumber)
+        : laps;
+
+    const orderedLaps = [...driverLaps].sort((a, b) => num(a.lap_number) - num(b.lap_number));
     if (!orderedLaps.length) return [];
 
     const completed = orderedLaps.filter(l => num(l.lap_duration) > 0 && l.date_start);
