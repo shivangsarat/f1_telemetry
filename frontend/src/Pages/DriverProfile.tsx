@@ -407,7 +407,24 @@ export const DriverProfile = () => {
                             <h1 className="text-3xl font-bold">
                                 {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
                             </h1>
-                            {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+                            {currentDriverInfo && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {currentDriverInfo.checkered && (
+                                        <span
+                                            className="text-[11px] px-2 py-1 rounded border border-gray-600 bg-gray-800/80 font-black uppercase tracking-wider text-gray-100"
+                                            title="Driver has taken the checkered flag"
+                                        >
+                                            🏁 Checkered
+                                        </span>
+                                    )}
+                                    {currentDriverInfo.in_pit && (
+                                        <span className="text-[10px] px-2 py-1 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 font-black uppercase tracking-wider">
+                                            PIT
+                                        </span>
+                                    )}
+                                    <DriverBadges driver={currentDriverInfo} />
+                                </div>
+                            )}
                         </div>
                         {!isAutoScroll && (
                             <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
