@@ -62,8 +62,8 @@ export const DriverProfile = () => {
     const cachedHistoricalPayload = useRaceStore(state => state.historicalDrivers[historicalCacheKey]);
     const cachedRaceDetails = useRaceStore(state => sessionKey ? state.historicalRaces[String(sessionKey)] : undefined);
 
-    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>(() => (
-        cachedHistoricalPayload || { telemetry: [], laps: [], stints: [] }
+    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[], locations?: any[]}>(() => (
+        cachedHistoricalPayload || { telemetry: [], laps: [], stints: [], locations: [] }
     ));
     const [raceDetails, setRaceDetails] = useState<any>(() => cachedRaceDetails || null);
     const [loading, setLoading] = useState(false);
@@ -329,6 +329,68 @@ export const DriverProfile = () => {
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
+    const sharedWindowMin = Math.max(0, currentSliderVal);
+    const sharedWindowMax = sharedWindowMin + VIEWPORT_LAPS;
+    const sharedPlayheadX = isAutoScroll
+        ? maxLapX
+        : Math.min(maxLapX || sharedWindowMax, sharedWindowMin + (VIEWPORT_LAPS * 0.75));
+
+    const historicalTracker = !isLive ? (() => {
+        const telemetry = Array.isArray(histPayload.telemetry) ? histPayload.telemetry : [];
+        const locations = Array.isArray(histPayload.locations) ? histPayload.locations : [];
+        if (!telemetry.length || !locations.length || !currentDriverInfo) return null;
+
+        const playheadTelemetry = telemetry.reduce((closest: any, point: any) => {
+            const x = Number(point?.lapX);
+            if (!Number.isFinite(x)) return closest;
+            if (!closest) return point;
+            return Math.abs(x - sharedPlayheadX) < Math.abs(Number(closest.lapX) - sharedPlayheadX)
+                ? point
+                : closest;
+        }, null);
+
+        const telemetryTime = playheadTelemetry?.date
+            ? new Date(playheadTelemetry.date).getTime()
+            : NaN;
+        if (!Number.isFinite(telemetryTime)) return null;
+
+        const location = locations.reduce((closest: any, point: any) => {
+            const time = point?.date ? new Date(point.date).getTime() : NaN;
+            if (!Number.isFinite(time)) return closest;
+            if (!closest) return point;
+            const closestTime = new Date(closest.date).getTime();
+            return Math.abs(time - telemetryTime) < Math.abs(closestTime - telemetryTime)
+                ? point
+                : closest;
+        }, null);
+
+        if (!location) return null;
+
+        return {
+            trace: [],
+            cars: [{
+                driver_number: driverNumber,
+                name: currentDriverInfo.name,
+                acronym: currentDriverInfo.name_acronym,
+                team_name: currentDriverInfo.team_name,
+                team_color: currentDriverInfo.team_color,
+                position: currentDriverInfo.position,
+                x: Number(location.x),
+                y: Number(location.y),
+                z: Number(location.z),
+                date: location.date
+            }],
+            circuit: {
+                name: raceDetails?.circuitInfo?.circuit_name
+                    || raceDetails?.circuitInfo?.name
+                    || raceDetails?.meetingInfo?.circuit_short_name
+                    || raceName,
+                image: raceDetails?.circuitInfo?.image || null,
+                rotation: Number(raceDetails?.circuitInfo?.rotation || 0),
+                corners: raceDetails?.circuitInfo?.corners || []
+            }
+        };
+    })() : null;
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
@@ -649,11 +711,12 @@ export const DriverProfile = () => {
                     </div>
                 )}
 
-                {isLive && (
+                {(isLive || historicalTracker) && (
                     <LiveTrackerWidget
-                        tracker={liveRace?.tracker}
+                        tracker={isLive ? liveRace?.tracker : historicalTracker}
                         sessionKey={sessionKey}
                         selectedDriver={driverNumber}
+                        showFullMapLink={isLive}
                     />
                 )}
                 
@@ -719,7 +782,9 @@ export const DriverProfile = () => {
                             <AllDriversPaceChart 
                                 activeResults={activeResults} 
                                 currentDriverNumber={driverNumber} 
-                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)} 
+                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                                windowMin={sharedWindowMin}
+                                windowMax={sharedWindowMax}
                             />
                         </div>
 
@@ -809,6 +874,8 @@ export const DriverProfile = () => {
                         activeResults={activeResults}
                         currentDriverNumber={driverNumber}
                         maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                        windowMin={sharedWindowMin}
+                        windowMax={sharedWindowMax}
                     />
                 </div>
             </div>
