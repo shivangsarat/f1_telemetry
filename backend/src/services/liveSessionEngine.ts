@@ -56,6 +56,7 @@ export class LiveSessionEngine {
     private readonly locationHistory = new Map<number, any[]>();
     private readonly latestLocations = new Map<number, any>();
     private readonly driverPitState = new Map<number, boolean>();
+    private readonly driverCheckeredState = new Set<number>();
     private trackReferenceDriver: number | null = null;
     private trackTrace: any[] = [];
     private championshipContext: any = null;
@@ -200,6 +201,7 @@ export class LiveSessionEngine {
 
             if (topic === 'race_control') {
                 this.upsertRaceControl(row);
+                this.updateDriverCheckeredState(row);
                 continue;
             }
 
@@ -316,6 +318,7 @@ export class LiveSessionEngine {
         this.locationHistory.clear();
         this.latestLocations.clear();
         this.driverPitState.clear();
+        this.driverCheckeredState.clear();
         this.trackReferenceDriver = null;
         this.trackTrace = [];
         this.championshipContext = null;
@@ -376,6 +379,29 @@ export class LiveSessionEngine {
 
         this.updatePitStateFromTelemetry(dNum, row);
         if (emit) this.emitLatestTelemetry(dNum);
+    }
+
+    private updateDriverCheckeredState(row: any) {
+        const message = String(row?.message || row?.text || '');
+        const explicitDriver = Number(row?.driver_number);
+        const carMatch = message.match(/\bCAR\s+(\d+)\b/i);
+        const driverNumber = Number.isFinite(explicitDriver) && explicitDriver > 0
+            ? explicitDriver
+            : Number(carMatch?.[1]);
+
+        if (!Number.isFinite(driverNumber) || driverNumber <= 0) return;
+
+        const flag = String(row?.flag || '').toUpperCase();
+        const hasCheckered =
+            flag === 'CHEQUERED'
+            || flag === 'CHECKERED'
+            || /\bCHEQUERED\b/i.test(message)
+            || /\bCHECKERED\b/i.test(message);
+
+        if (hasCheckered) {
+            this.driverCheckeredState.add(driverNumber);
+            this.scheduleEmit();
+        }
     }
 
     private updatePitStateFromTelemetry(dNum: number, telemetryRow: any) {
@@ -718,10 +744,33 @@ export class LiveSessionEngine {
         const calculated = {
             ...calculatedWithTiming,
             results: Array.isArray(calculatedWithTiming?.results)
-                ? calculatedWithTiming.results.map((result: any) => ({
-                    ...result,
-                    in_pit: Boolean(this.driverPitState.get(Number(result.driver_number)))
-                }))
+                ? calculatedWithTiming.results.map((result: any) => {
+                    const driverNumber = Number(result.driver_number);
+                    const latestPit = Array.isArray(result.pit_stops) && result.pit_stops.length > 0
+                        ? result.pit_stops[result.pit_stops.length - 1]
+                        : null;
+                    const rawLatestPit = this.state.pits
+                        .filter((pit: any) => Number(pit.driver_number) === driverNumber)
+                        .sort((a: any, b: any) =>
+                            new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime()
+                        )
+                        .at(-1);
+
+                    return {
+                        ...result,
+                        in_pit: Boolean(this.driverPitState.get(driverNumber)),
+                        checkered: this.driverCheckeredState.has(driverNumber),
+                        active_pit: this.driverPitState.get(driverNumber)
+                            ? {
+                                lap: Number(rawLatestPit?.lap_number ?? latestPit?.lap ?? result.current_lap ?? 0) || null,
+                                date: rawLatestPit?.date || null,
+                                stop_duration: rawLatestPit?.stop_duration ?? latestPit?.stop_duration ?? null,
+                                lane_duration: rawLatestPit?.lane_duration ?? latestPit?.lane_duration ?? null,
+                                pit_duration: rawLatestPit?.pit_duration ?? latestPit?.pit_duration ?? null
+                            }
+                            : null
+                    };
+                })
                 : calculatedWithTiming?.results
         };
 
