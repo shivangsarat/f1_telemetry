@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useRaceStore } from '../store/useRaceStore';
 
 type TrackerState = {
     trace?: any[];
@@ -36,6 +37,7 @@ export const LiveTrackMap = ({
 }) => {
     const trace = tracker?.trace || [];
     const cars = tracker?.cars || [];
+    const broadcastDelaySeconds = useRaceStore(state => state.broadcastDelaySeconds);
     const circuitCorners = tracker?.circuit?.corners || [];
     const [now, setNow] = useState(() => Date.now());
 
@@ -49,7 +51,8 @@ export const LiveTrackMap = ({
         return Number.isFinite(time) ? Math.max(latest, time) : latest;
     }, 0);
     const hasRecordedPositions = cars.length > 0;
-    const isStreaming = hasRecordedPositions && lastLocationTime > 0 && (now - lastLocationTime) <= 5000;
+    const presentationNow = now - (broadcastDelaySeconds * 1000);
+    const isStreaming = hasRecordedPositions && lastLocationTime > 0 && (presentationNow - lastLocationTime) <= 5000;
     const trackerMode = isStreaming ? 'LIVE' : hasRecordedPositions ? 'LAST RECORDED' : 'MAP ONLY';
 
     const geometry = useMemo(() => {
