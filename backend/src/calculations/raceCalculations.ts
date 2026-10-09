@@ -451,18 +451,16 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
                     // lap start until the proper lap row arrives.
                     if (time > completedEnd) {
                         const nextLapNumber = num(current.lap_number) + 1;
-                        const nextLapProgress = Math.max(
-                            0,
-                            Math.min(0.999, (time - completedEnd) / (Math.max(1, lastCompletedDuration) * 1000))
-                        );
-                        lapX = nextLapNumber + nextLapProgress;
+                        const estimatedLapsSinceCompletion =
+                            (time - completedEnd) / (Math.max(1, lastCompletedDuration) * 1000);
+                        lapX = nextLapNumber + Math.max(0, estimatedLapsSinceCompletion);
                     } else {
                         lapX = num(current.lap_number)
                             + Math.max(0, Math.min(0.999, (time - currentStart) / (estimate * 1000)));
                     }
                 } else {
                     lapX = num(current.lap_number)
-                        + Math.max(0, Math.min(0.999, (time - currentStart) / (Math.max(1, estimate) * 1000)));
+                        + Math.max(0, (time - currentStart) / (Math.max(1, estimate) * 1000));
                 }
             }
 
@@ -838,7 +836,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             partial_lap_progress: calculatePartialLapProgress(lastLapData),
             best_lap_raw: bestLapData ? num(bestLapData.lap_duration) : Infinity,
             best_lap: formatLapTime(bestLapData ? num(bestLapData.lap_duration) : null),
-            last_lap: lastLapData && num(lastLapData.lap_duration) > 0 ? formatLapTime(num(lastLapData.lap_duration)) : '-',
+            last_completed_lap_number: completedLapNumber,
+            last_lap: completedLaps.length
+                ? formatLapTime(num(completedLaps[completedLaps.length - 1].lap_duration))
+                : '-',
             best_sectors: bestSectors,
             last_sectors: lastSectors,
             stints: mappedStints,
