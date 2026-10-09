@@ -36,6 +36,7 @@ type DriverLiveData = {
 interface RaceState {
     connected: boolean;
     liveSessionKey: string | null;
+    broadcastDelaySeconds: number;
     liveRace: LiveRaceData | null;
     driverLive: Record<number, DriverLiveData>;
 
@@ -56,6 +57,7 @@ interface RaceState {
     connect: () => void;
     subscribeToDriver: (driverNumber: number) => void;
     unsubscribeFromDriver: (driverNumber: number) => void;
+    setBroadcastDelaySeconds: (seconds: number) => void;
 
     cacheHistoricalRace: (sessionKey: string, data: any) => void;
     cacheHistoricalDriver: (sessionKey: string, driverNumber: number, data: DriverLiveData) => void;
@@ -94,9 +96,15 @@ const wsUrl = import.meta.env.PROD
     ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
     : 'ws://localhost:8080';
 
+const readBroadcastDelay = () => {
+    const saved = Number(window.localStorage.getItem('broadcast-sync-delay-seconds') || 0);
+    return Number.isFinite(saved) ? Math.max(0, Math.min(120, saved)) : 0;
+};
+
 export const useRaceStore = create<RaceState>((set) => ({
     connected: false,
     liveSessionKey: null,
+    broadcastDelaySeconds: readBroadcastDelay(),
     liveRace: null,
     driverLive: {},
     historicalRaces: {},
@@ -113,6 +121,15 @@ export const useRaceStore = create<RaceState>((set) => ({
 
         ws.onopen = () => {
             set({ connected: true });
+
+            // Configure the single backend presentation timeline before asking
+            // for any page-specific driver stream. This prevents realtime data
+            // flashing briefly before the selected delay is applied.
+            ws?.send(JSON.stringify({
+                type: 'SET_BROADCAST_DELAY',
+                seconds: useRaceStore.getState().broadcastDelaySeconds
+            }));
+
             driverSubscriptions.forEach(driver => {
                 ws?.send(JSON.stringify({ type: 'SUBSCRIBE_DRIVER', driver }));
             });
@@ -121,6 +138,11 @@ export const useRaceStore = create<RaceState>((set) => ({
         ws.onmessage = event => {
             try {
                 const msg = JSON.parse(event.data);
+
+                if (msg.type === 'BROADCAST_DELAY_APPLIED') {
+                    const seconds = Math.max(0, Math.min(120, Number(msg.seconds) || 0));
+                    set({ broadcastDelaySeconds: seconds });
+                }
 
                 if (msg.type === 'LIVE_RACE_STATE' && msg.data) {
                     const incomingSessionKey = msg.sessionKey != null ? String(msg.sessionKey) : null;
@@ -229,6 +251,25 @@ export const useRaceStore = create<RaceState>((set) => ({
         driverSubscriptions.delete(driverNumber);
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'UNSUBSCRIBE_DRIVER', driver: driverNumber }));
+        }
+    },
+
+    setBroadcastDelaySeconds: (seconds: number) => {
+        const next = Math.max(0, Math.min(120, Math.round(Number(seconds) || 0)));
+        window.localStorage.setItem('broadcast-sync-delay-seconds', String(next));
+
+        // Telemetry from the old presentation point must not be merged with the
+        // new delayed bootstrap, otherwise the cockpit can retain future points.
+        set({
+            broadcastDelaySeconds: next,
+            driverLive: {}
+        });
+
+        if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'SET_BROADCAST_DELAY',
+                seconds: next
+            }));
         }
     },
 
