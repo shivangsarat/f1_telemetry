@@ -69,6 +69,7 @@ export class LiveSessionEngine {
         lastLapNumber: number;
         lastLap: string;
         lastSectors: any;
+        completedLaps: number;
     }>();
     private readonly maps = new Map<string, Map<string, any>>();
 
@@ -551,6 +552,9 @@ export class LiveSessionEngine {
         const hasIncomingLast = incomingLastNumber > 0 && result?.last_lap && result.last_lap !== '-';
         const shouldUpdateLast = hasIncomingLast && incomingLastNumber >= previousLastNumber;
 
+        const incomingCompletedLaps = Number(result?.completed_laps ?? result?.driver_laps ?? 0);
+        const previousCompletedLaps = Number(previous?.completedLaps || 0);
+
         const nextMemory = {
             bestLapRaw: shouldUpdateBest
                 ? incomingBestRaw
@@ -567,7 +571,11 @@ export class LiveSessionEngine {
                 : (previous?.lastLap || result.last_lap || '-'),
             lastSectors: shouldUpdateLast
                 ? result.last_sectors
-                : (previous?.lastSectors || result.last_sectors || null)
+                : (previous?.lastSectors || result.last_sectors || null),
+            completedLaps: Math.max(
+                Number.isFinite(incomingCompletedLaps) ? incomingCompletedLaps : 0,
+                previousCompletedLaps
+            )
         };
 
         this.timingMemory.set(driverNumber, nextMemory);
@@ -579,15 +587,71 @@ export class LiveSessionEngine {
             best_sectors: nextMemory.bestSectors || result.best_sectors,
             last_completed_lap_number: Math.max(incomingLastNumber, nextMemory.lastLapNumber || 0),
             last_lap: nextMemory.lastLap || result.last_lap,
-            last_sectors: nextMemory.lastSectors || result.last_sectors
+            last_sectors: nextMemory.lastSectors || result.last_sectors,
+            completed_laps: Math.max(Number(result?.completed_laps || 0), nextMemory.completedLaps || 0),
+            driver_laps: Math.max(Number(result?.driver_laps || 0), nextMemory.completedLaps || 0)
         };
     }
 
     private applyTimingMemory(calculated: any) {
         if (!Array.isArray(calculated?.results)) return calculated;
+
+        const rememberedResults = calculated.results.map((result: any) => this.rememberDriverTiming(result));
+
+        if (calculated.isRace) {
+            return {
+                ...calculated,
+                results: rememberedResults
+            };
+        }
+
+        // Practice/Qualifying/Sprint Qualifying timing towers are ranked by each
+        // driver's best valid lap. Timing memory is applied after the raw pure
+        // calculation, so we must re-rank after restoring a driver's persisted PB;
+        // otherwise a restored 1:33 can remain below a stale 1:35 position.
+        const ranked = [...rememberedResults].sort((a: any, b: any) => {
+            const aBest = Number(a.best_lap_raw);
+            const bBest = Number(b.best_lap_raw);
+            const aValid = Number.isFinite(aBest) && aBest > 0;
+            const bValid = Number.isFinite(bBest) && bBest > 0;
+
+            if (aValid && bValid) return aBest - bBest;
+            if (aValid) return -1;
+            if (bValid) return 1;
+            return Number(a.position || 999) - Number(b.position || 999);
+        });
+
+        const leaderBest = Number(ranked.find((result: any) =>
+            Number.isFinite(Number(result.best_lap_raw))
+            && Number(result.best_lap_raw) > 0
+        )?.best_lap_raw);
+
+        ranked.forEach((result: any, index: number) => {
+            result.position = index + 1;
+
+            const currentBest = Number(result.best_lap_raw);
+            if (!Number.isFinite(currentBest) || currentBest <= 0 || !Number.isFinite(leaderBest)) {
+                result.interval = '-';
+                result.gap_to_leader = 'No Time';
+                return;
+            }
+
+            if (index === 0) {
+                result.interval = 'Leader';
+                result.gap_to_leader = 'Leader';
+                return;
+            }
+
+            const previousBest = Number(ranked[index - 1]?.best_lap_raw);
+            result.gap_to_leader = `+${(currentBest - leaderBest).toFixed(3)}s`;
+            result.interval = Number.isFinite(previousBest) && previousBest > 0
+                ? `+${(currentBest - previousBest).toFixed(3)}s`
+                : '-';
+        });
+
         return {
             ...calculated,
-            results: calculated.results.map((result: any) => this.rememberDriverTiming(result))
+            results: ranked
         };
     }
 
