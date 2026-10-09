@@ -420,6 +420,12 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
     let smoothedLongitudinalG = 0;
     let smoothedLateralG = 0;
 
+    const maxKnownLapNumber = Math.max(
+        1,
+        ...orderedLaps.map((lap: any) => num(lap.lap_number)).filter((lapNumber: number) => Number.isFinite(lapNumber))
+    );
+    const maxPlausibleLapX = maxKnownLapNumber + 3;
+
     const points = orderedCarData
         .map(t => {
             const time = parseDate(t.date);
@@ -462,6 +468,14 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
                     lapX = num(current.lap_number)
                         + Math.max(0, (time - currentStart) / (Math.max(1, estimate) * 1000));
                 }
+            }
+
+            // Guard the chart from malformed/stale timestamps producing an
+            // enormous extrapolated x-range. OpenF1 can briefly lag lap rows,
+            // but live telemetry should never be more than a few laps ahead of
+            // the latest known lap record.
+            if (!Number.isFinite(lapX) || lapX < 0 || lapX > maxPlausibleLapX) {
+                return null;
             }
 
             const speed = num(t.speed);
