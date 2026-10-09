@@ -31,6 +31,7 @@ type DriverLiveData = {
     telemetry: any[];
     laps: any[];
     stints: any[];
+    locations?: any[];
 };
 
 interface RaceState {
