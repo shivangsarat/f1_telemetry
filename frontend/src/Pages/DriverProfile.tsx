@@ -105,6 +105,7 @@ export const DriverProfile = () => {
     }, []);
 
     useLayoutEffect(() => {
+        if (isLive) return;
         if (!chartRef1.current || !chartRef2.current) return;
         const width = chartRef1.current.clientWidth || 800;
 
@@ -145,7 +146,7 @@ export const DriverProfile = () => {
         }, [[], [], [], []], chartRef2.current);
 
         return () => { plotInstance1.current?.destroy(); plotInstance2.current?.destroy(); };
-    }, [updateLegendState]);
+    }, [updateLegendState, isLive]);
 
     useEffect(() => {
         if (isLive) {
@@ -208,7 +209,7 @@ export const DriverProfile = () => {
     }, [isAutoScroll, maxLapX, manualMin, updateLegendState]);
 
     useEffect(() => {
-        if (processedData.length === 0) return;
+        if (isLive || processedData.length === 0) return;
 
         const validData = processedData
             .filter((point: any) => Number.isFinite(Number(point?.lapX)))
@@ -237,9 +238,11 @@ export const DriverProfile = () => {
 
         const latest = validData[validData.length - 1];
         if (isAutoScroll && latest) updateLegendState(latest);
-    }, [processedData, isAutoScroll, updateLegendState]);
+    }, [processedData, isAutoScroll, updateLegendState, isLive]);
 
     useEffect(() => {
+        if (isLive) return;
+
         let min = 0;
         let max = VIEWPORT_LAPS;
 
@@ -259,7 +262,7 @@ export const DriverProfile = () => {
         plotInstance2.current?.setScale('x', { min, max });
 
         snapToPlayhead();
-    }, [maxLapX, isAutoScroll, manualMin, snapToPlayhead]);
+    }, [maxLapX, isAutoScroll, manualMin, snapToPlayhead, isLive]);
 
     const maxAllowedScroll = Math.max(0, maxLapX + (VIEWPORT_LAPS * 0.25) - VIEWPORT_LAPS);
     const currentSliderVal = isAutoScroll ? maxAllowedScroll : manualMin;
@@ -682,7 +685,13 @@ export const DriverProfile = () => {
                         <span>Speed & Engine RPM</span>
                         {isLiveTracking && <span className="text-green-500 animate-pulse font-bold tracking-widest">● LIVE SYNC</span>}
                     </h2>
-                    <div ref={chartRef1} className="w-full min-h-[300px]"></div>
+                    {isLive ? (
+                        <div className="min-h-[300px] flex items-center justify-center rounded-lg border border-gray-800 bg-gray-950/20 text-xs font-bold uppercase tracking-widest text-gray-500">
+                            Live graph temporarily disabled — cockpit telemetry remains active
+                        </div>
+                    ) : (
+                        <div ref={chartRef1} className="w-full min-h-[300px]"></div>
+                    )}
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
                         Lap Position: <span ref={lapXRef1} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
@@ -693,7 +702,13 @@ export const DriverProfile = () => {
                 
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800" onMouseLeave={snapToPlayhead}>
                     <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Driver Inputs & Gear</h2>
-                    <div ref={chartRef2} className="w-full min-h-[250px]"></div>
+                    {isLive ? (
+                        <div className="min-h-[250px] flex items-center justify-center rounded-lg border border-gray-800 bg-gray-950/20 text-xs font-bold uppercase tracking-widest text-gray-500">
+                            Live graph temporarily disabled — cockpit telemetry remains active
+                        </div>
+                    ) : (
+                        <div ref={chartRef2} className="w-full min-h-[250px]"></div>
+                    )}
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
                         Lap Position: <span ref={lapXRef2} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
