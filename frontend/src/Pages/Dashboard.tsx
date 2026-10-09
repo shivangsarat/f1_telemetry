@@ -573,6 +573,7 @@ export const Dashboard = () => {
                                         data={activeResults || []} 
                                         columns={driverColumns} 
                                         getRowKey={(row: any) => row.driver_number}
+                                        animateReorder={isLiveSession}
                                         expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={undefined} />}
                                     />
                                 )}
