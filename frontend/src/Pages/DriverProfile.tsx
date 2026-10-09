@@ -334,10 +334,6 @@ export const DriverProfile = () => {
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
-    const sharedWindowMin = !isAutoScroll ? Math.max(0, currentSliderVal) : undefined;
-    const sharedWindowMax = !isAutoScroll && sharedWindowMin !== undefined
-        ? sharedWindowMin + VIEWPORT_LAPS
-        : undefined;
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
@@ -737,8 +733,6 @@ export const DriverProfile = () => {
                                 activeResults={activeResults} 
                                 currentDriverNumber={driverNumber} 
                                 maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
-                                windowMin={sharedWindowMin}
-                                windowMax={sharedWindowMax}
                             />
                         </div>
 
@@ -828,8 +822,6 @@ export const DriverProfile = () => {
                         activeResults={activeResults}
                         currentDriverNumber={driverNumber}
                         maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
-                        windowMin={sharedWindowMin}
-                        windowMax={sharedWindowMax}
                     />
                 </div>
             </div>
