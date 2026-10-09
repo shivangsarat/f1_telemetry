@@ -6,6 +6,7 @@ import { WeatherCard, SessionBestsCard, RaceControlWidget, DriverExpandedRow } f
 import { getTyreColor } from '../Utils/helpers';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
+import { getQualifyingPhaseClock } from '../Utils/sessionTiming';
 
 export const Dashboard = () => {
     const { sessionKey } = useParams();
@@ -104,7 +105,17 @@ export const Dashboard = () => {
             ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
             : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     };
-    const displayedSessionClock = formatSessionClock(remainingSessionMs);
+    const qualifyingPhaseClock = isLiveSession
+        ? getQualifyingPhaseClock({
+            sessionName: activeSessionInfo?.session_name,
+            sessionType: activeSessionInfo?.session_type,
+            raceControl: activeRaceControl,
+            nowMs: sessionClockNow
+        })
+        : null;
+    const displayedSessionClock = qualifyingPhaseClock
+        ? formatSessionClock(qualifyingPhaseClock.remainingMs)
+        : formatSessionClock(remainingSessionMs);
 
     const upcomingRemainingMs = isUpcoming && Number.isFinite(sessionStartMs)
         ? Math.max(0, sessionStartMs - sessionClockNow)
@@ -191,6 +202,18 @@ export const Dashboard = () => {
         activeSessionInfo?.date_start,
         activeSessionInfo?.date_end
     ]);
+
+    useEffect(() => {
+        if (!isUpcoming || !Number.isFinite(sessionStartMs)) return;
+
+        const now = Date.now();
+        if (now < sessionStartMs) return;
+
+        const withinScheduledSession = !Number.isFinite(sessionEndMs) || now <= sessionEndMs;
+        if (!withinScheduledSession) return;
+
+        navigate('/race/live', { replace: true });
+    }, [isUpcoming, sessionStartMs, sessionEndMs, sessionClockNow, navigate]);
 
     const updateScrollTopVisibility = () => {
         const tableScrollTop = resultsScrollRef.current?.scrollTop || 0;
@@ -342,17 +365,14 @@ export const Dashboard = () => {
                                     <button
                                         key={s.session_key}
                                         onClick={() => navigate(`/race/${s.session_key}`)}
-                                        disabled={isFuture && !isUpcoming}
                                         className={`px-4 py-2 text-xs font-bold tracking-widest rounded-md transition-all ${
                                             isActive 
                                                 ? isLiveSession
                                                     ? 'bg-green-600/20 text-green-300 border border-green-500/40 shadow-lg'
                                                     : 'bg-red-600 text-white shadow-lg'
-                                                : isFuture && !isUpcoming
-                                                    ? 'text-gray-700 cursor-not-allowed opacity-50'
-                                                    : isFuture
-                                                        ? 'text-blue-300 hover:text-white hover:bg-blue-500/10 border border-blue-500/20'
-                                                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                                                : isFuture
+                                                    ? 'text-blue-300 hover:text-white hover:bg-blue-500/10 border border-blue-500/20'
+                                                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
                                         }`}
                                     >
                                         {s.session_name.toUpperCase()}
@@ -386,13 +406,32 @@ export const Dashboard = () => {
                     ) : (
                         <div
                             className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
-                            title={isLiveSession ? 'Estimated session time remaining' : 'Scheduled session duration'}
+                            title={
+                                qualifyingPhaseClock
+                                    ? `${qualifyingPhaseClock.label} time remaining${qualifyingPhaseClock.isPaused ? ' · paused' : ''}`
+                                    : isLiveSession
+                                        ? 'Estimated session time remaining'
+                                        : 'Scheduled session duration'
+                            }
                         >
-                            <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
+                            <div className={`w-2 h-2 rounded-full ${
+                                qualifyingPhaseClock
+                                    ? 'bg-purple-400'
+                                    : isLiveSession
+                                        ? 'bg-green-500 animate-pulse'
+                                        : 'bg-gray-500'
+                            }`}></div>
                             <span className="font-bold uppercase tracking-widest text-xs text-gray-400">
-                                {isLiveSession ? 'Session Time' : 'Session Duration'}
+                                {qualifyingPhaseClock
+                                    ? `${qualifyingPhaseClock.label} Time`
+                                    : isLiveSession
+                                        ? 'Session Time'
+                                        : 'Session Duration'}
                             </span>
                             <span className="font-black text-white font-mono text-sm tabular-nums">{displayedSessionClock}</span>
+                            {qualifyingPhaseClock?.isPaused && (
+                                <span className="text-[9px] font-black uppercase tracking-widest text-yellow-300">Paused</span>
+                            )}
                         </div>
                     )}
                     </div>
@@ -478,7 +517,12 @@ export const Dashboard = () => {
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                                     {availableSessions.map((session: any) => {
                                         const start = new Date(session.date_start).getTime();
+                                        const end = new Date(session.date_end).getTime();
                                         const selected = String(session.session_key) === String(sessionKey);
+                                        const completed = Number.isFinite(end) && end <= sessionClockNow;
+                                        const activeNow = Number.isFinite(start)
+                                            && start <= sessionClockNow
+                                            && (!Number.isFinite(end) || end > sessionClockNow);
                                         return (
                                             <button
                                                 type="button"
@@ -487,11 +531,34 @@ export const Dashboard = () => {
                                                 className={`text-left rounded-lg border p-4 transition ${
                                                     selected
                                                         ? 'border-blue-500/50 bg-blue-500/10'
-                                                        : 'border-gray-800 bg-gray-950/30 hover:border-gray-700 hover:bg-gray-800/50'
+                                                        : completed
+                                                            ? 'border-green-500/25 bg-green-500/5 hover:border-green-500/40'
+                                                            : activeNow
+                                                                ? 'border-green-500/40 bg-green-500/10 hover:border-green-400/60'
+                                                                : 'border-gray-800 bg-gray-950/30 hover:border-gray-700 hover:bg-gray-800/50'
                                                 }`}
                                             >
-                                                <div className={`text-xs font-black uppercase tracking-wider ${selected ? 'text-blue-300' : 'text-gray-200'}`}>
-                                                    {session.session_name || session.session_type || 'Session'}
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className={`text-xs font-black uppercase tracking-wider ${
+                                                        selected
+                                                            ? 'text-blue-300'
+                                                            : completed || activeNow
+                                                                ? 'text-green-300'
+                                                                : 'text-gray-200'
+                                                    }`}>
+                                                        {session.session_name || session.session_type || 'Session'}
+                                                    </div>
+                                                    {completed && (
+                                                        <span className="shrink-0 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-green-300">
+                                                            ✓ Completed
+                                                        </span>
+                                                    )}
+                                                    {!completed && activeNow && (
+                                                        <span className="shrink-0 flex items-center gap-1.5 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-green-300">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                                            Live
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="mt-2 text-[10px] font-mono text-gray-500">
                                                     {Number.isFinite(start)
@@ -536,6 +603,7 @@ export const Dashboard = () => {
                                         data={activeResults || []} 
                                         columns={driverColumns} 
                                         getRowKey={(row: any) => row.driver_number}
+                                        animateReorder={isLiveSession}
                                         expandableRender={(row) => <DriverExpandedRow driver={row} isLive={isLiveSession} isRaceMode={isRaceMode} liveStandings={undefined} />}
                                     />
                                 )}
