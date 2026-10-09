@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 
 interface Column<T> {
     header: string;
@@ -12,10 +12,54 @@ interface TableProps<T> {
     expandableRender?: (row: T) => React.ReactNode;
     getRowKey?: (row: T) => string | number;
     fit?: boolean;
+    animateReorder?: boolean;
 }
 
-export function Table<T>({ data, columns, expandableRender, getRowKey, fit = false }: TableProps<T>) {
+export function Table<T>({
+    data,
+    columns,
+    expandableRender,
+    getRowKey,
+    fit = false,
+    animateReorder = false
+}: TableProps<T>) {
     const [expandedRow, setExpandedRow] = useState<string | number | null>(null);
+    const rowRefs = useRef(new Map<string | number, HTMLTableRowElement>());
+    const previousRects = useRef(new Map<string | number, DOMRect>());
+
+    useLayoutEffect(() => {
+        if (!animateReorder) {
+            previousRects.current.clear();
+            return;
+        }
+
+        const nextRects = new Map<string | number, DOMRect>();
+        rowRefs.current.forEach((element, key) => {
+            const nextRect = element.getBoundingClientRect();
+            nextRects.set(key, nextRect);
+
+            const previousRect = previousRects.current.get(key);
+            if (!previousRect) return;
+
+            const deltaY = previousRect.top - nextRect.top;
+            if (Math.abs(deltaY) < 1) return;
+
+            element.getAnimations().forEach(animation => animation.cancel());
+            element.animate(
+                [
+                    { transform: `translateY(${deltaY}px)`, opacity: 0.82 },
+                    { transform: 'translateY(0)', opacity: 1 }
+                ],
+                {
+                    duration: 520,
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                    fill: 'both'
+                }
+            );
+        });
+
+        previousRects.current = nextRects;
+    }, [data, animateReorder]);
 
     if (!data || !Array.isArray(data)) {
         return <div className="p-4 text-gray-500">No data available</div>;
@@ -44,9 +88,13 @@ export function Table<T>({ data, columns, expandableRender, getRowKey, fit = fal
                         
                         return (
                             <React.Fragment key={rowKey}>
-                                <tr 
+                                <tr
+                                    ref={(element) => {
+                                        if (element) rowRefs.current.set(rowKey, element);
+                                        else rowRefs.current.delete(rowKey);
+                                    }}
                                     onClick={() => expandableRender && setExpandedRow(isExpanded ? null : rowKey)}
-                                    className={`group transition-colors ${expandableRender ? 'cursor-pointer hover:bg-gray-800/50' : 'hover:bg-gray-800/30'} ${isExpanded ? 'bg-gray-800/30' : ''}`}
+                                    className={`group transition-colors ${animateReorder ? 'will-change-transform' : ''} ${expandableRender ? 'cursor-pointer hover:bg-gray-800/50' : 'hover:bg-gray-800/30'} ${isExpanded ? 'bg-gray-800/30' : ''}`}
                                 >
                                     {columns.map((col, colIdx) => (
                                         <td
