@@ -87,7 +87,10 @@ const mergeTelemetryHistory = (existing: any[] = [], incoming: any[] = []) => {
         return Number(a?.lapX || 0) - Number(b?.lapX || 0);
     });
 
-    return merged.length > 30_000 ? merged.slice(-30_000) : merged;
+    // Live cockpit only needs a rolling telemetry window. Keeping tens of
+    // thousands of raw samples made every incoming point trigger large array
+    // merges/sorts and could crash Chromium in production.
+    return merged.length > 6_000 ? merged.slice(-6_000) : merged;
 };
 
 let ws: WebSocket | null = null;
