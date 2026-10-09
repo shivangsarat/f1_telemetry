@@ -6,6 +6,8 @@ import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, Pit
 import { SectorBlock } from '../Components/TelemetryWidgets';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
+import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
+import { getQualifyingPhaseClock } from '../Utils/sessionTiming';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
@@ -42,38 +44,6 @@ const formatLapTime = (seconds: number | null) => {
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
 };
 
-const renderSectorBlock = (sectors: any) => {
-    if (!sectors) return null;
-    return (
-        <div className="flex gap-6 font-mono text-gray-400 text-xs mt-1">
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S1:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_1 ? `${sectors.duration_sector_1.toFixed(3)}s` : (sectors.s1 ? `${sectors.s1.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.i1_speed && <span className="text-[10px] text-gray-500 leading-tight">I1: {sectors.i1_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_1 || sectors.seg1)}
-            </div>
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S2:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_2 ? `${sectors.duration_sector_2.toFixed(3)}s` : (sectors.s2 ? `${sectors.s2.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.i2_speed && <span className="text-[10px] text-gray-500 leading-tight">I2: {sectors.i2_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_2 || sectors.seg2)}
-            </div>
-            <div className="w-20 flex flex-col justify-end">
-                <span className="block text-gray-500 mb-0.5">S3:</span>
-                <strong className="text-gray-200 text-sm block mb-1">{sectors.duration_sector_3 ? `${sectors.duration_sector_3.toFixed(3)}s` : (sectors.s3 ? `${sectors.s3.toFixed(3)}s` : '-')}</strong>
-                <div className="h-8 flex flex-col justify-start">
-                    {sectors.st_speed && <span className="text-[10px] text-purple-400 leading-tight">Trap: {sectors.st_speed}<br/>km/h</span>}
-                </div>
-                {renderMinisectors(sectors.segments_sector_3 || sectors.seg3)}
-            </div>
-        </div>
-    );
-};
-
 export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
@@ -82,13 +52,23 @@ export const DriverProfile = () => {
     
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const broadcastDelaySeconds = useRaceStore(state => state.broadcastDelaySeconds);
+    const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
+    const cacheHistoricalDriver = useRaceStore(state => state.cacheHistoricalDriver);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
     
     const liveData = useDriverTelemetry(driverNumber, isLive); 
 
-    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[]}>({ telemetry: [], laps: [], stints: [] });
-    const [raceDetails, setRaceDetails] = useState<any>(null);
+    const historicalCacheKey = `${sessionKey || ''}:${driverNumber}`;
+    const cachedHistoricalPayload = useRaceStore(state => state.historicalDrivers[historicalCacheKey]);
+    const cachedRaceDetails = useRaceStore(state => sessionKey ? state.historicalRaces[String(sessionKey)] : undefined);
+
+    const [histPayload, setHistPayload] = useState<{telemetry: any[], laps: any[], stints: any[], locations?: any[]}>(() => (
+        cachedHistoricalPayload || { telemetry: [], laps: [], stints: [], locations: [] }
+    ));
+    const [raceDetails, setRaceDetails] = useState<any>(() => cachedRaceDetails || null);
     const [loading, setLoading] = useState(false);
+    const [sessionClockNow, setSessionClockNow] = useState(() => Date.now());
 
     const [isAutoScroll, setIsAutoScroll] = useState(true);
     const [manualMin, setManualMin] = useState(0);
@@ -106,6 +86,9 @@ export const DriverProfile = () => {
     const throttleRef = useRef<HTMLSpanElement>(null);
     const brakeRef = useRef<HTMLSpanElement>(null);
     const gearRef = useRef<HTMLSpanElement>(null);
+
+    const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
+    const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
 
     const processedData = (isLive ? liveData : histPayload).telemetry;
     const processedDataRef = useRef(processedData);
@@ -175,18 +158,44 @@ export const DriverProfile = () => {
             return;
         }
 
+        const key = String(sessionKey || '');
+        if (!key || !Number.isFinite(driverNumber)) return;
+
+        const state = useRaceStore.getState();
+        const telemetryKey = `${key}:${driverNumber}`;
+        const cachedTelemetry = state.historicalDrivers[telemetryKey];
+        const cachedRace = state.historicalRaces[key];
+
+        if (cachedTelemetry) setHistPayload(cachedTelemetry);
+        if (cachedRace) setRaceDetails(cachedRace);
+
+        const needsTelemetry = !cachedTelemetry;
+        const needsRace = !cachedRace;
+
+        if (!needsTelemetry && !needsRace) {
+            setLoading(false);
+            return;
+        }
+
         const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
         setLoading(true);
 
         Promise.all([
-            fetch(`${API_BASE}/api/telemetry/${sessionKey}/${driverNumber}`).then(r => r.json()),
-            fetch(`${API_BASE}/api/race-details/${sessionKey}`).then(r => r.json())
+            needsTelemetry
+                ? fetch(`${API_BASE}/api/telemetry/${key}/${driverNumber}`).then(r => r.json())
+                : Promise.resolve(cachedTelemetry),
+            needsRace
+                ? fetch(`${API_BASE}/api/race-details/${key}`).then(r => r.json())
+                : Promise.resolve(cachedRace)
         ]).then(([cleanData, rd]) => {
-            setHistPayload(cleanData);
-            setRaceDetails(rd);
+            if (needsTelemetry && cleanData) cacheHistoricalDriver(key, driverNumber, cleanData);
+            if (needsRace && rd) cacheHistoricalRace(key, rd);
+
+            if (cleanData) setHistPayload(cleanData);
+            if (rd) setRaceDetails(rd);
             setLoading(false);
         }).catch(() => setLoading(false));
-    }, [sessionKey, driverNumber, isLive]);
+    }, [sessionKey, driverNumber, isLive, cacheHistoricalDriver, cacheHistoricalRace]);
 
     const snapToPlayhead = useCallback(() => {
         if (!plotInstance1.current || !plotInstance2.current || processedDataRef.current.length === 0) return;
@@ -204,15 +213,55 @@ export const DriverProfile = () => {
     }, [isAutoScroll, maxLapX, manualMin, updateLegendState]);
 
     useEffect(() => {
-        if (processedData.length > 0) {
-            const xLaps = processedData.map((d: any) => d.lapX);
-            const latestX = xLaps[xLaps.length - 1];
-            setMaxLapX(latestX); 
-            
-            plotInstance1.current?.setData([xLaps, processedData.map((d: any) => d.speed), processedData.map((d: any) => d.rpm)]);
-            plotInstance2.current?.setData([xLaps, processedData.map((d: any) => d.throttle), processedData.map((d: any) => d.brake), processedData.map((d: any) => d.gear)]);
-        }
-    }, [processedData]);
+        if (processedData.length === 0) return;
+
+        const plausibleMaxLap = Math.max(
+            10,
+            Number(liveRace?.maxRaceLap || raceDetails?.maxRaceLap || 0) + 5,
+            Number(currentDriverInfo?.completed_laps || currentDriverInfo?.driver_laps || 0) + 5
+        );
+
+        const validData = processedData
+            .filter((point: any) => {
+                const lapX = Number(point?.lapX);
+                return Number.isFinite(lapX)
+                    && lapX >= 0
+                    && lapX <= Math.min(250, plausibleMaxLap);
+            })
+            .sort((a: any, b: any) => Number(a.lapX) - Number(b.lapX));
+
+        if (validData.length === 0) return;
+
+        const xLaps = validData.map((d: any) => Number(d.lapX));
+        const latestX = xLaps[xLaps.length - 1];
+        setMaxLapX(latestX);
+
+        // Keep the original rolling telemetry-plot behaviour: the dataset grows
+        // with the session and the separate viewport effect follows the latest
+        // three laps. Do not turn the graph into a separate time-axis timeline.
+        plotInstance1.current?.setData([
+            xLaps,
+            validData.map((d: any) => Number(d.speed) || 0),
+            validData.map((d: any) => Number(d.rpm) || 0)
+        ]);
+        plotInstance2.current?.setData([
+            xLaps,
+            validData.map((d: any) => Number(d.throttle) || 0),
+            validData.map((d: any) => Number(d.brake) || 0),
+            validData.map((d: any) => Number(d.gear) || 0)
+        ]);
+
+        const latest = validData[validData.length - 1];
+        if (isAutoScroll && latest) updateLegendState(latest);
+    }, [
+        processedData,
+        isAutoScroll,
+        updateLegendState,
+        liveRace?.maxRaceLap,
+        raceDetails?.maxRaceLap,
+        currentDriverInfo?.completed_laps,
+        currentDriverInfo?.driver_laps
+    ]);
 
     useEffect(() => {
         let min = 0;
@@ -230,6 +279,10 @@ export const DriverProfile = () => {
             max = manualMin + VIEWPORT_LAPS;
         }
 
+        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min || max - min > 10) {
+            return;
+        }
+
         plotInstance1.current?.setScale('x', { min, max });
         plotInstance2.current?.setScale('x', { min, max });
 
@@ -241,28 +294,122 @@ export const DriverProfile = () => {
     const hasEnoughDataToScroll = maxLapX > VIEWPORT_LAPS;
 
     
-    const activeResults = isLive ? (liveRace?.results || []) : (raceDetails?.results || []);
     const isRaceMode = isLive ? Boolean(liveRace?.isRace) : Boolean(raceDetails?.isRace);
+    const activeSessionInfo = isLive ? liveRace?.sessionInfo : raceDetails?.sessionInfo;
+    const activeMeetingInfo = isLive ? liveRace?.meetingInfo : raceDetails?.meetingInfo;
+    const raceName =
+        activeMeetingInfo?.meeting_name
+        || activeSessionInfo?.meeting_name
+        || (activeSessionInfo?.location ? `${activeSessionInfo.location} Grand Prix` : 'Grand Prix');
+    const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
 
-    const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
+    const scheduledTotalLaps = Number(
+        isLive ? liveRace?.scheduledTotalLaps : raceDetails?.scheduledTotalLaps
+    ) || 0;
+    const lapsCompleted = Number(
+        currentDriverInfo?.completed_laps
+        ?? currentDriverInfo?.driver_laps
+        ?? 0
+    );
+
+    const sessionStartMs = activeSessionInfo?.date_start
+        ? new Date(activeSessionInfo.date_start).getTime()
+        : NaN;
+    const sessionEndMs = activeSessionInfo?.date_end
+        ? new Date(activeSessionInfo.date_end).getTime()
+        : NaN;
+
+    const effectiveSessionNow = isLive
+        ? sessionClockNow - broadcastDelaySeconds * 1000
+        : sessionClockNow;
+    const sessionRemainingMs = isLive && !isRaceMode && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - effectiveSessionNow)
+        : 0;
+
+    const sessionDurationMs = !isLive && !isRaceMode
+        && Number.isFinite(sessionStartMs)
+        && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionStartMs)
+        : 0;
+
+    const formatSessionClock = (ms: number) => {
+        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return hours > 0
+            ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+            : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    };
+
+    const qualifyingPhaseClock = isLive
+        ? getQualifyingPhaseClock({
+            sessionName: activeSessionInfo?.session_name,
+            sessionType: activeSessionInfo?.session_type,
+            raceControl: liveRace?.raceControl || [],
+            nowMs: effectiveSessionNow
+        })
+        : null;
+
+    const displayedSessionTime = qualifyingPhaseClock
+        ? formatSessionClock(qualifyingPhaseClock.remainingMs)
+        : formatSessionClock(isLive ? sessionRemainingMs : sessionDurationMs);
+    const deletedLapByNumber = new Map<number, any>(
+        (currentDriverInfo?.lapsHistory || [])
+            .filter((lap: any) => lap?.is_deleted)
+            .map((lap: any) => [Number(lap.lap_number), lap])
+    );
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
-    
-    const activeLapData = activeData.laps?.find((l: any) => l.lap_number === activeLapNumber) || null;
-    const activeStint = activeData.stints?.find((s: any) => s.lap_start <= activeLapNumber && (s.lap_end >= activeLapNumber || s.lap_end === 0)) || null;
+    // Comparison charts keep their original full-session scale by default.
+    // They only follow the 3-lap window after the user manually moves the
+    // Lap Window slider. This is particularly important live, where the full
+    // position/lap-time overview should not continuously zoom with telemetry.
+    const sharedWindowMin = !isAutoScroll ? Math.max(0, currentSliderVal) : undefined;
+    const sharedWindowMax = !isAutoScroll && sharedWindowMin !== undefined
+        ? sharedWindowMin + VIEWPORT_LAPS
+        : undefined;
+
+
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
-    const bestLapObj = completedLaps.length > 0 ? completedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, completedLaps[0]) : null;
+    const validCompletedLaps = completedLaps.filter((lap: any) => !deletedLapByNumber.has(Number(lap.lap_number)));
+    const bestLapObj = validCompletedLaps.length > 0
+        ? validCompletedLaps.reduce((min: any, l: any) => l.lap_duration < min.lap_duration ? l : min, validCompletedLaps[0])
+        : null;
     const sessionBests = isLive ? liveRace?.sessionBests : raceDetails?.sessionBests;
+
+    const liveLapProgress = latestTelemetry && Number.isFinite(Number(latestTelemetry.lapX))
+        ? Math.max(0, Math.min(0.999, Number(latestTelemetry.lapX) - Math.floor(Number(latestTelemetry.lapX))))
+        : 0;
+
+    const latestTelemetryTime = latestTelemetry?.date ? new Date(latestTelemetry.date).getTime() : NaN;
+    const currentLapStartTime = currentLiveLapObj?.date_start ? new Date(currentLiveLapObj.date_start).getTime() : NaN;
+    const elapsedCurrentLap = Number.isFinite(latestTelemetryTime) && Number.isFinite(currentLapStartTime)
+        ? Math.max(0, (latestTelemetryTime - currentLapStartTime) / 1000)
+        : null;
+
+    // Update continuously from every telemetry sample rather than only when a
+    // sector closes. lapX is already refreshed at car-data frequency, so use the
+    // current fractional lap progress as the live comparison point against PB.
+    const liveDeltaToPb = bestLapObj
+        && elapsedCurrentLap !== null
+        && liveLapProgress > 0.01
+        ? elapsedCurrentLap - (Number(bestLapObj.lap_duration) * liveLapProgress)
+        : null;
+
+    const projectedLapTime = elapsedCurrentLap !== null && liveLapProgress > 0.05
+        ? elapsedCurrentLap / liveLapProgress
+        : null;
     const isSessionBestLap = (value: any) => {
         const lap = Number(value);
         const best = Number(sessionBests?.lap?.raw);
         return Number.isFinite(lap) && Number.isFinite(best) && Math.abs(lap - best) < 0.0005;
     };
-    const personalBestSectors = completedLaps.reduce((best: any, lap: any) => ({
+    const personalBestSectors = validCompletedLaps.reduce((best: any, lap: any) => ({
         s1: Math.min(best.s1, Number(lap.duration_sector_1) || Infinity),
         s2: Math.min(best.s2, Number(lap.duration_sector_2) || Infinity),
         s3: Math.min(best.s3, Number(lap.duration_sector_3) || Infinity),
@@ -277,28 +424,124 @@ export const DriverProfile = () => {
         return Number.isFinite(n) && Number.isFinite(best) && Math.abs(n - best) < 0.0005;
     };
 
+    useEffect(() => {
+        if (!isLive || isRaceMode) return;
+        setSessionClockNow(Date.now());
+        const timer = window.setInterval(() => setSessionClockNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [isLive, isRaceMode, activeSessionInfo?.session_key, activeSessionInfo?.date_end]);
+
     const isLiveTracking = isAutoScroll && isLive;
 
     return (
         <div className="p-6 bg-black text-white min-h-screen flex flex-col gap-6">
 
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-3 flex-wrap">
-                        <h1 className="text-3xl font-bold">
-                            {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
-                        </h1>
-                        {currentDriverInfo && <DriverBadges driver={currentDriverInfo} />}
+            <div className="flex justify-between items-start gap-6 flex-wrap">
+                <div className="flex flex-col gap-2 min-w-0">
+                    <div className="flex items-center gap-2">
+                        {isLive && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />}
+                        <span className={`text-xs font-black uppercase tracking-[0.16em] ${isLive ? 'text-green-400' : 'text-blue-400'}`}>
+                            {raceName}
+                        </span>
+                        {activeSessionName && (
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-600">
+                                · {activeSessionName}
+                            </span>
+                        )}
                     </div>
-                    {!isAutoScroll && (
-                        <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
-                            Resume Auto-Scroll →
-                        </button>
-                    )}
+
+                    <div className="flex items-center gap-6 flex-wrap">
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <h1 className="text-3xl font-bold">
+                                {currentDriverInfo?.name || 'Driver'} <span className="text-gray-400">#{driverNumber}</span> Telemetry
+                            </h1>
+                            {currentDriverInfo && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {currentDriverInfo.checkered && (
+                                        <span
+                                            className="text-[11px] px-2 py-1 rounded border border-gray-600 bg-gray-800/80 font-black uppercase tracking-wider text-gray-100"
+                                            title="Driver has taken the checkered flag"
+                                        >
+                                            🏁 Checkered
+                                        </span>
+                                    )}
+                                    {currentDriverInfo.in_pit && (
+                                        <span className="text-[10px] px-2 py-1 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-300 font-black uppercase tracking-wider">
+                                            PIT
+                                        </span>
+                                    )}
+                                    <DriverBadges driver={currentDriverInfo} />
+                                </div>
+                            )}
+                        </div>
+                        {!isAutoScroll && (
+                            <button onClick={() => setIsAutoScroll(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-1.5 rounded-full font-bold uppercase transition shadow-lg shadow-blue-900/50">
+                                Resume Auto-Scroll →
+                            </button>
+                        )}
+                    </div>
                 </div>
-                <Link to={`/race/${sessionKey}`} className="text-gray-400 hover:text-white uppercase font-bold text-sm">
-                    ← Back to Results
-                </Link>
+
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                    {isLive && <BroadcastSyncControl />}
+                    {isRaceMode ? (
+                        <>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title="Driver completed laps"
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Completed</span>
+                                <span className="font-mono text-sm font-black text-white">{lapsCompleted}</span>
+                            </div>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title="Scheduled race distance"
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Total Laps</span>
+                                <span className="font-mono text-sm font-black text-white">
+                                    {scheduledTotalLaps > 0 ? scheduledTotalLaps : '-'}
+                                </span>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title={isLive ? 'Session time remaining' : 'Scheduled session duration'}
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
+                                    {qualifyingPhaseClock
+                                        ? `${qualifyingPhaseClock.label} Time`
+                                        : isLive
+                                            ? 'Session Time'
+                                            : 'Duration'}
+                                </span>
+                                <span className="font-mono text-sm font-black text-white tabular-nums">
+                                    {displayedSessionTime}
+                                </span>
+                                {qualifyingPhaseClock?.isPaused && (
+                                    <span className="text-[8px] font-black uppercase tracking-widest text-yellow-300">
+                                        Paused
+                                    </span>
+                                )}
+                            </div>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title="Driver completed laps"
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Laps Completed</span>
+                                <span className="font-mono text-sm font-black text-white">{lapsCompleted}</span>
+                            </div>
+                        </>
+                    )}
+
+                    <Link
+                        to={`/race/${sessionKey}`}
+                        className="text-gray-400 hover:text-white uppercase font-bold text-sm shrink-0"
+                    >
+                        ← Back to Results
+                    </Link>
+                </div>
             </div>
             
             <div className={`flex flex-col gap-6 relative ${isLiveTracking ? 'live-playhead' : 'hist-playhead'}`}>
@@ -323,12 +566,14 @@ export const DriverProfile = () => {
                                 {(isRaceMode || (isLive && !isRaceMode)) && (
                                     <div className={`flex flex-col gap-1 ${!isRaceMode ? 'border-l border-gray-700/50 pl-8' : ''}`}>
                                         <div>
-                                            <span className="font-bold text-gray-400 block mb-1">{isRaceMode ? 'Last Lap:' : 'Current Lap:'}</span> 
-                                            <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentLiveLapObj?.lap_duration) ? 'text-purple-400' : 'text-white'}`}>
-                                                {(currentDriverInfo.last_lap === '-' && (isLive && !isRaceMode)) ? 'In Progress' : currentDriverInfo.last_lap}
+                                            <span className="font-bold text-gray-400 block mb-1">Last Lap:</span> 
+                                            <span className={`font-mono text-lg font-bold ${isSessionBestLap(currentDriverInfo?.last_lap_raw) ? 'text-purple-400' : 'text-white'}`}>
+                                                {currentDriverInfo.last_lap || '-'}
                                             </span>
                                         </div>
-                                        {(isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors) && <SectorBlock sectors={isRaceMode ? currentDriverInfo.last_sectors : currentDriverInfo.best_sectors} sessionBests={sessionBests} />}
+                                        {currentDriverInfo.last_sectors && (
+                                            <SectorBlock sectors={currentDriverInfo.last_sectors} sessionBests={sessionBests} />
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -363,9 +608,31 @@ export const DriverProfile = () => {
                                     <div><span className="text-gray-500">S2:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_2 ? currentLiveLapObj.duration_sector_2.toFixed(3) : '-'}</span></div>
                                     <div><span className="text-gray-500">S3:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_3 ? currentLiveLapObj.duration_sector_3.toFixed(3) : '-'}</span></div>
                                 </div>
-                                <div className="mt-2 pt-3 border-t border-gray-800/50">
-                                    <span className="text-purple-400 text-[10px] font-bold uppercase tracking-widest block mb-1">Personal Best (L{bestLapObj?.lap_number || '-'})</span>
-                                    <span className="font-mono text-white text-lg font-bold">{bestLapObj ? formatLapTime(bestLapObj.lap_duration) : '-'}</span>
+                                <div className="mt-2 pt-3 border-t border-gray-800/50 grid grid-cols-3 gap-3">
+                                    <div>
+                                        <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Lap Progress</span>
+                                        <span className="font-mono text-white text-base font-black">
+                                            {Math.round(liveLapProgress * 100)}%
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Delta vs PB</span>
+                                        <span className={`font-mono text-base font-black ${
+                                            liveDeltaToPb === null
+                                                ? 'text-gray-500'
+                                                : liveDeltaToPb <= 0
+                                                    ? 'text-green-400'
+                                                    : 'text-red-400'
+                                        }`}>
+                                            {liveDeltaToPb === null ? '--' : `${liveDeltaToPb >= 0 ? '+' : ''}${liveDeltaToPb.toFixed(3)}s`}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Projected Lap</span>
+                                        <span className="font-mono text-white text-base font-black">
+                                            {projectedLapTime ? formatLapTime(projectedLapTime) : '--'}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -451,24 +718,24 @@ export const DriverProfile = () => {
 
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 relative" onMouseLeave={snapToPlayhead}>
                     <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4 flex justify-between">
-                        <span>Timeline: Speed & Engine RPM</span>
+                        <span>Speed & Engine RPM</span>
                         {isLiveTracking && <span className="text-green-500 animate-pulse font-bold tracking-widest">● LIVE SYNC</span>}
                     </h2>
                     <div ref={chartRef1} className="w-full min-h-[300px]"></div>
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
-                        Timeline Pos: <span ref={lapXRef1} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        Lap Position: <span ref={lapXRef1} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#00ff00]">■</span> Speed: <span ref={speedRef} className="text-white font-bold">{legendValues.speed}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ff00ff]">■</span> RPM: <span ref={rpmRef} className="text-white font-bold">{legendValues.rpm}</span>
                     </div>
                 </div>
                 
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800" onMouseLeave={snapToPlayhead}>
-                    <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Timeline: Driver Inputs & Gear</h2>
+                    <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Driver Inputs & Gear</h2>
                     <div ref={chartRef2} className="w-full min-h-[250px]"></div>
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
-                        Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        Lap Position: <span ref={lapXRef2} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">{legendValues.throttle}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">{legendValues.brake}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">{legendValues.gear}</span>
@@ -478,7 +745,7 @@ export const DriverProfile = () => {
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 flex flex-col gap-6">
                     {hasEnoughDataToScroll ? (
                         <div className="flex items-center gap-4">
-                            <span className="text-xs text-gray-500 uppercase font-bold w-20">Timeline</span>
+                            <span className="text-xs text-gray-500 uppercase font-bold w-20">Lap Window</span>
                             <input 
                                 type="range" min={0} max={maxAllowedScroll} step={0.01} value={currentSliderVal}
                                 onChange={(e) => {
@@ -504,7 +771,9 @@ export const DriverProfile = () => {
                             <AllDriversPaceChart 
                                 activeResults={activeResults} 
                                 currentDriverNumber={driverNumber} 
-                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)} 
+                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                                windowMin={sharedWindowMin}
+                                windowMax={sharedWindowMax}
                             />
                         </div>
 
@@ -521,6 +790,7 @@ export const DriverProfile = () => {
                                         const lapDuration = lap.lap_duration;
                                         const bestDuration = bestLapObj?.lap_duration;
                                         const delta = (lapDuration && bestDuration) ? lapDuration - bestDuration : null;
+                                        const deletedLap = deletedLapByNumber.get(Number(lap.lap_number));
                                         const stint = activeData.stints?.find((s: any) => s.lap_start <= lap.lap_number && (s.lap_end >= lap.lap_number || s.lap_end === 0));
                                         const tyreCompound = stint?.compound || 'UNKNOWN';
 
@@ -540,10 +810,28 @@ export const DriverProfile = () => {
                                                 <div className="flex items-center gap-3">
                                                     <span className="font-bold w-12 text-gray-300">L{lap.lap_number}</span>
                                                     <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getTyreColor(tyreCompound) }} title={tyreCompound}></div>
-                                                    <span className={`font-bold ${isSessionBestLap(lapDuration) ? 'text-purple-400' : (delta === 0 ? 'text-green-400' : 'text-white')}`}>{formatLapTime(lapDuration)}</span>
-                                                    <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
-                                                        {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
+                                                    <span className={`font-bold ${
+                                                        deletedLap
+                                                            ? 'text-red-300'
+                                                            : isSessionBestLap(lapDuration)
+                                                                ? 'text-purple-400'
+                                                                : (delta === 0 ? 'text-green-400' : 'text-white')
+                                                    }`}>
+                                                        {formatLapTime(lapDuration)}
                                                     </span>
+                                                    {!deletedLap && (
+                                                        <span className={`text-[10px] ${delta === 0 ? 'text-purple-400 font-bold' : 'text-gray-300'}`}>
+                                                            {delta === 0 ? 'PB' : (delta !== null ? `+${delta.toFixed(3)}s` : '')}
+                                                        </span>
+                                                    )}
+                                                    {deletedLap && (
+                                                        <span
+                                                            className="text-[9px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-300 font-black uppercase tracking-wider whitespace-nowrap"
+                                                            title={deletedLap.deleted_message || deletedLap.deleted_reason || 'Lap deleted by race control'}
+                                                        >
+                                                            Lap Deleted
+                                                        </span>
+                                                    )}
                                                 </div>
 
                                                 <div className="flex items-center gap-3">
@@ -573,7 +861,10 @@ export const DriverProfile = () => {
 
                     <AllDriversLapTimesChart
                         activeResults={activeResults}
+                        currentDriverNumber={driverNumber}
                         maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                        windowMin={sharedWindowMin}
+                        windowMax={sharedWindowMax}
                     />
                 </div>
             </div>

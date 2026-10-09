@@ -99,6 +99,123 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
     return requestPromise;
 };
 
+const F1_LIVETIMING_STATIC = 'https://livetiming.formula1.com/static';
+
+const parseLapCountPayload = (payload: any): number | null => {
+    const total = Number(payload?.TotalLaps ?? payload?.totalLaps ?? payload?.total_laps);
+    return Number.isFinite(total) && total > 0 ? total : null;
+};
+
+const parseLapCountStream = (raw: any): number | null => {
+    if (typeof raw !== 'string') return null;
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index--) {
+        const line = lines[index];
+        const jsonStart = line.indexOf('{');
+        if (jsonStart < 0) continue;
+        try {
+            const value = parseLapCountPayload(JSON.parse(line.slice(jsonStart)));
+            if (value) return value;
+        } catch {
+            // Ignore malformed/partial stream lines and continue backwards.
+        }
+    }
+    return null;
+};
+
+export const getScheduledTotalLaps = async (sessionInfo: any): Promise<number | null> => {
+    const direct = Number(
+        sessionInfo?.total_laps
+        ?? sessionInfo?.totalLaps
+        ?? sessionInfo?.number_of_laps
+        ?? sessionInfo?.NumberOfLaps
+    );
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const sessionType = String(sessionInfo?.session_type || sessionInfo?.session_name || '').toLowerCase();
+    if (!sessionType.includes('race') && !sessionType.includes('sprint')) return null;
+
+    const sessionKey = Number(sessionInfo?.session_key);
+    const year = Number(sessionInfo?.year)
+        || (sessionInfo?.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : NaN);
+    if (!Number.isFinite(year)) return null;
+
+    try {
+        const seasonIndexRes = await getCached(
+            `f1_livetiming_index_${year}`,
+            600000,
+            () => axios.get(`${F1_LIVETIMING_STATIC}/${year}/Index.json`, {
+                headers: { 'User-Agent': 'F1-Dash/1.0' }
+            })
+        );
+
+        const meetings = seasonIndexRes?.data?.Meetings || [];
+        const sessions = meetings.flatMap((meeting: any) =>
+            (meeting.Sessions || []).map((session: any) => ({ ...session, __meeting: meeting }))
+        );
+
+        let liveTimingSession = sessions.find((session: any) =>
+            Number.isFinite(sessionKey) && Number(session.Key) === sessionKey
+        );
+
+        if (!liveTimingSession) {
+            const targetStart = sessionInfo?.date_start ? new Date(sessionInfo.date_start).getTime() : NaN;
+            const targetName = String(sessionInfo?.session_name || sessionInfo?.session_type || '').toLowerCase();
+            liveTimingSession = sessions.find((session: any) => {
+                const name = String(session.Name || session.Type || '').toLowerCase();
+                const start = session.StartDate ? new Date(session.StartDate).getTime() : NaN;
+                return name === targetName
+                    && (!Number.isFinite(targetStart) || !Number.isFinite(start) || Math.abs(start - targetStart) < 6 * 60 * 60 * 1000);
+            });
+        }
+
+        if (!liveTimingSession?.Path) return null;
+
+        const path = String(liveTimingSession.Path).replace(/^\/+/, '');
+        const sessionBase = liveTimingSession.Path.startsWith('http')
+            ? String(liveTimingSession.Path).replace(/\/$/, '')
+            : `${F1_LIVETIMING_STATIC}/${path.replace(/\/$/, '')}`;
+
+        const sessionIndexRes = await getCached(
+            `f1_livetiming_session_index_${year}_${sessionKey || path}`,
+            600000,
+            () => axios.get(`${sessionBase}/Index.json`, {
+                headers: { 'User-Agent': 'F1-Dash/1.0' }
+            })
+        );
+
+        const lapCountFeed = sessionIndexRes?.data?.Feeds?.LapCount || {};
+        const keyFramePath = lapCountFeed.KeyFramePath || 'LapCount.json';
+
+        try {
+            const keyFrameRes = await getCached(
+                `f1_lap_count_${year}_${sessionKey || path}`,
+                30000,
+                () => axios.get(`${sessionBase}/${keyFramePath}`, {
+                    headers: { 'User-Agent': 'F1-Dash/1.0' }
+                })
+            );
+            const total = parseLapCountPayload(keyFrameRes?.data);
+            if (total) return total;
+        } catch {
+            // Some sessions expose only the stream while the keyframe is unavailable.
+        }
+
+        const streamPath = lapCountFeed.StreamPath;
+        if (streamPath) {
+            const streamRes = await axios.get(`${sessionBase}/${streamPath}`, {
+                headers: { 'User-Agent': 'F1-Dash/1.0' },
+                responseType: 'text'
+            });
+            return parseLapCountStream(streamRes.data);
+        }
+    } catch (error: any) {
+        console.warn('⚠️ Unable to resolve scheduled race laps from F1 LiveTiming:', error?.message || error);
+    }
+
+    return null;
+};
+
 const formatGap = (gap: any) => {
     if (gap === null || gap === undefined || gap === '') return '-';
     if (typeof gap === 'string' && gap.toUpperCase().includes('LAP')) return gap;
@@ -239,6 +356,109 @@ const buildTyreHistory = (
     return { stints, pitStops: matchedPitStops };
 };
 
+const isTestingSession = (meeting: any, session: any) => {
+    const meetingName = String(meeting?.meeting_name || '').toLowerCase();
+    const sessionName = String(session?.session_name || '').toLowerCase();
+    const sessionType = String(session?.session_type || '').toLowerCase();
+    return meetingName.includes('test') || sessionName.includes('test') || sessionType.includes('test');
+};
+
+const mapSeasonCalendarEntries = (meetings: any[] = [], sessions: any[] = [], year: number) => {
+    const entries: any[] = [];
+
+    for (const meeting of meetings) {
+        const meetingSessions = sessions
+            .filter((session: any) => session.meeting_key === meeting.meeting_key)
+            .sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
+
+        const testingSessions = meetingSessions.filter((session: any) => isTestingSession(meeting, session));
+        if (testingSessions.length > 0) {
+            const now = Date.now();
+            const startedSessions = testingSessions.filter((session: any) =>
+                new Date(session.date_start).getTime() <= now
+            );
+            const representativeSession = startedSessions.length > 0
+                ? startedSessions[startedSessions.length - 1]
+                : testingSessions[0];
+
+            entries.push({
+                round: meeting.meeting_name || 'Pre-Season Testing',
+                location: meeting.location,
+                date: testingSessions[0]?.date_start || meeting.date_start,
+                date_end: testingSessions[testingSessions.length - 1]?.date_end || meeting.date_end,
+                session_key: representativeSession?.session_key,
+                meeting_key: meeting.meeting_key,
+                year,
+                is_testing: true,
+                session_name: representativeSession?.session_name,
+                session_count: testingSessions.length
+            });
+            continue;
+        }
+
+        const race = meetingSessions.find((session: any) =>
+            String(session.session_name || '').toLowerCase() === 'race'
+            || String(session.session_type || '').toLowerCase() === 'race'
+        );
+
+        if (race) {
+            entries.push({
+                round: meeting.meeting_name,
+                location: meeting.location,
+                date: race.date_start || meeting.date_start,
+                session_key: race.session_key,
+                meeting_key: meeting.meeting_key,
+                year,
+                is_testing: false,
+                session_name: race.session_name
+            });
+        }
+    }
+
+    return entries;
+};
+
+const OPENF1_OLDEST_SEASON = 2023;
+
+export const getAvailableSeasons = () => {
+    const currentYear = new Date().getFullYear();
+    const availableSeasons = Array.from(
+        { length: Math.max(1, currentYear - OPENF1_OLDEST_SEASON + 1) },
+        (_, index) => currentYear - index
+    );
+
+    return {
+        currentSeason: currentYear,
+        oldestSeason: OPENF1_OLDEST_SEASON,
+        availableSeasons
+    };
+};
+
+export const getSeasonRaces = async (year: number) => {
+    const currentYear = new Date().getFullYear();
+    if (!Number.isInteger(year) || year < 1900 || year > currentYear) {
+        return [];
+    }
+
+    const [meetingsRes, sessionsRes] = await Promise.all([
+        getCached(
+            `meetings_${year}`,
+            600000,
+            () => openF1Request(`${OPENF1_BASE}/meetings?year=${year}`)
+        ),
+        getCached(
+            `sessions_all_${year}`,
+            600000,
+            () => openF1Request(`${OPENF1_BASE}/sessions?year=${year}`)
+        )
+    ]);
+
+    const now = Date.now();
+    return mapSeasonCalendarEntries(meetingsRes?.data || [], sessionsRes?.data || [], year)
+        .filter((race: any) => new Date(race.date).getTime() <= now)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+};
+
 export const getHomeData = async () => {
     const currentYear = new Date().getFullYear();
 
@@ -249,39 +469,64 @@ export const getHomeData = async () => {
     ]);
 
     let meetingsRes = await getCached(`meetings_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=${currentYear}`));
-    let sessionsRes = await getCached(`sessions_race_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}&session_name=Race`));
+    let sessionsRes = await getCached(`sessions_all_${currentYear}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}`));
 
     if (!meetingsRes?.data || meetingsRes.data.length === 0) {
         console.warn(`No calendar data found for ${currentYear}. Falling back to 2024 calendar...`);
         meetingsRes = await getCached('meetings_2024', 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=2024`));
-        sessionsRes = await getCached('sessions_race_2024', 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=2024&session_name=Race`));
+        sessionsRes = await getCached('sessions_all_2024', 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=2024`));
+    }
+
+    let nextYearMeetingsRes: any = { data: [] };
+    let nextYearSessionsRes: any = { data: [] };
+    try {
+        [nextYearMeetingsRes, nextYearSessionsRes] = await Promise.all([
+            getCached(`meetings_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/meetings?year=${currentYear + 1}`)),
+            getCached(`sessions_all_${currentYear + 1}`, 600000, () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear + 1}`))
+        ]);
+    } catch (error: any) {
+        console.warn(`Next-year calendar for ${currentYear + 1} is not available yet:`, error?.message || error);
     }
 
     const driversData = driversRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.DriverStandings || [];
     const drivers = driversData.map((d: any, idx: number) => ({
-        position: d.position, 
-        name: `${d.Driver.givenName} ${d.Driver.familyName}`, 
-        team: d.Constructors[0]?.name, 
+        position: d.position,
+        driver_id: d.Driver.driverId,
+        permanent_number: d.Driver.permanentNumber,
+        code: d.Driver.code,
+        given_name: d.Driver.givenName,
+        family_name: d.Driver.familyName,
+        name: `${d.Driver.givenName} ${d.Driver.familyName}`,
+        nationality: d.Driver.nationality,
+        date_of_birth: d.Driver.dateOfBirth,
+        team_id: d.Constructors[0]?.constructorId,
+        team: d.Constructors[0]?.name,
         points: d.points,
+        wins: d.wins,
         diff_to_next: idx === 0 ? '-' : `-${Number(driversData[idx-1].points) - Number(d.points)}`
     }));
 
     const teamsData = teamsRes?.data?.MRData?.StandingsTable?.StandingsLists[0]?.ConstructorStandings || [];
     const teams = teamsData.map((t: any, idx: number) => ({
-        position: t.position, 
-        name: t.Constructor.name, 
+        position: t.position,
+        team_id: t.Constructor.constructorId,
+        name: t.Constructor.name,
+        nationality: t.Constructor.nationality,
         points: t.points,
+        wins: t.wins,
         diff_to_next: idx === 0 ? '-' : `-${Number(teamsData[idx-1].points) - Number(t.points)}`
     }));
 
-    const races = (meetingsRes?.data || []).map((m: any) => {
-        const race = sessionsRes?.data?.find((s: any) => s.meeting_key === m.meeting_key);
-        return race ? { round: m.meeting_name, location: m.location, date: m.date_start, session_key: race.session_key } : null;
-    }).filter(Boolean);
+    const races = mapSeasonCalendarEntries(meetingsRes?.data || [], sessionsRes?.data || [], currentYear);
+    const nextYearRaces = mapSeasonCalendarEntries(nextYearMeetingsRes?.data || [], nextYearSessionsRes?.data || [], currentYear + 1)
+        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const now = Date.now();
     const pastRaces = races.filter((r: any) => new Date(r.date).getTime() <= now).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    const upcomingRaces = races.filter((r: any) => new Date(r.date).getTime() > now).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const upcomingRaces = [
+        ...races.filter((r: any) => new Date(r.date).getTime() > now),
+        ...nextYearRaces
+    ].sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let liveStatus = { isLive: false, session_key: null, type: '' };
     if (liveRes?.data?.[0]) {
@@ -290,11 +535,163 @@ export const getHomeData = async () => {
         liveStatus = { isLive: now >= new Date(s.date_start).getTime() && (isNaN(end) || now <= end), session_key: s.session_key, type: s.session_name };
     }
 
-    return { drivers, teams, pastRaces, upcomingRaces, liveStatus };
+    const seasonMeta = getAvailableSeasons();
+
+    return { drivers, teams, pastRaces, upcomingRaces, nextYearRaces, liveStatus, seasonMeta };
 };
 
-export const getRaceDetails = async (sessionKey: string) => {
-    const ttl = sessionKey === 'latest' ? 5000 : 86400000;
+export const getDriverSeasonProfile = async (driverId: string) => {
+    const safeId = encodeURIComponent(driverId);
+    const [standingsRes, resultsRes] = await Promise.all([
+        getCached(
+            `driver_profile_standings_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/drivers/${safeId}/driverStandings.json`)
+        ),
+        getCached(
+            `driver_profile_results_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/drivers/${safeId}/results.json`)
+        )
+    ]);
+
+    const standings = standingsRes?.data?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0] || null;
+    const races = resultsRes?.data?.MRData?.RaceTable?.Races || [];
+    const driver = standings?.Driver || races?.[0]?.Results?.[0]?.Driver || null;
+    const constructor = standings?.Constructors?.[0] || races?.[0]?.Results?.[0]?.Constructor || null;
+
+    return {
+        season: Number(standingsRes?.data?.MRData?.StandingsTable?.season || new Date().getFullYear()),
+        driver: driver ? {
+            id: driver.driverId,
+            permanent_number: driver.permanentNumber,
+            code: driver.code,
+            given_name: driver.givenName,
+            family_name: driver.familyName,
+            name: `${driver.givenName || ''} ${driver.familyName || ''}`.trim(),
+            nationality: driver.nationality,
+            date_of_birth: driver.dateOfBirth
+        } : null,
+        team: constructor ? {
+            id: constructor.constructorId,
+            name: constructor.name,
+            nationality: constructor.nationality
+        } : null,
+        standing: standings ? {
+            position: Number(standings.position),
+            points: Number(standings.points),
+            wins: Number(standings.wins)
+        } : null,
+        races: races.map((race: any) => {
+            const result = race.Results?.[0] || {};
+            return {
+                round: Number(race.round),
+                race_name: race.raceName,
+                date: race.date,
+                position: result.position,
+                grid: result.grid,
+                points: Number(result.points || 0),
+                status: result.status,
+                laps: Number(result.laps || 0),
+                fastest_lap_rank: result.FastestLap?.rank || null,
+                fastest_lap_time: result.FastestLap?.Time?.time || null
+            };
+        })
+    };
+};
+
+export const getTeamSeasonProfile = async (constructorId: string) => {
+    const safeId = encodeURIComponent(constructorId);
+    const [standingsRes, resultsRes, driversRes] = await Promise.all([
+        getCached(
+            `team_profile_standings_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/constructors/${safeId}/constructorStandings.json`)
+        ),
+        getCached(
+            `team_profile_results_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/constructors/${safeId}/results.json`)
+        ),
+        getCached(
+            `team_profile_drivers_${safeId}`,
+            300000,
+            () => axios.get(`${ERGAST_BASE}/current/constructors/${safeId}/drivers.json`)
+        )
+    ]);
+
+    const standing = standingsRes?.data?.MRData?.StandingsTable?.StandingsLists?.[0]?.ConstructorStandings?.[0] || null;
+    const constructor = standing?.Constructor || null;
+    const races = resultsRes?.data?.MRData?.RaceTable?.Races || [];
+    const drivers = driversRes?.data?.MRData?.DriverTable?.Drivers || [];
+
+    return {
+        season: Number(standingsRes?.data?.MRData?.StandingsTable?.season || new Date().getFullYear()),
+        team: constructor ? {
+            id: constructor.constructorId,
+            name: constructor.name,
+            nationality: constructor.nationality
+        } : null,
+        standing: standing ? {
+            position: Number(standing.position),
+            points: Number(standing.points),
+            wins: Number(standing.wins)
+        } : null,
+        drivers: drivers.map((driver: any) => ({
+            id: driver.driverId,
+            permanent_number: driver.permanentNumber,
+            code: driver.code,
+            name: `${driver.givenName || ''} ${driver.familyName || ''}`.trim(),
+            nationality: driver.nationality
+        })),
+        races: races.map((race: any) => ({
+            round: Number(race.round),
+            race_name: race.raceName,
+            date: race.date,
+            results: (race.Results || []).map((result: any) => ({
+                driver_id: result.Driver?.driverId,
+                driver_name: `${result.Driver?.givenName || ''} ${result.Driver?.familyName || ''}`.trim(),
+                position: result.position,
+                grid: result.grid,
+                points: Number(result.points || 0),
+                status: result.status,
+                laps: Number(result.laps || 0)
+            }))
+        }))
+    };
+};
+
+export const getCurrentLiveSession = async () => {
+    const now = Date.now();
+    const currentYear = new Date(now).getUTCFullYear();
+
+    const sessionsRes = await getCached(
+        `current_live_sessions_${currentYear}`,
+        15000,
+        () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}`)
+    );
+
+    const sessions = (sessionsRes?.data || [])
+        .filter((session: any) => {
+            const start = new Date(session.date_start || 0).getTime();
+            const end = new Date(session.date_end || 0).getTime();
+
+            if (!Number.isFinite(start) || start > now) return false;
+
+            // Most OpenF1 sessions expose date_end. If it is temporarily absent,
+            // keep a recently-started session eligible for a bounded window.
+            if (Number.isFinite(end) && end > 0) return now <= end;
+            return now - start <= 12 * 60 * 60 * 1000;
+        })
+        .sort((a: any, b: any) =>
+            new Date(b.date_start || 0).getTime() - new Date(a.date_start || 0).getTime()
+        );
+
+    return sessions[0] || null;
+};
+
+export const getRaceDetails = async (sessionKey: string, liveOverride = false) => {
+    const ttl = sessionKey === 'latest' || liveOverride ? 5000 : 86400000;
     let activeSessionKey = sessionKey;
     let availableSessions: any[] = [];
 
@@ -316,10 +713,7 @@ export const getRaceDetails = async (sessionKey: string) => {
             availableSessions = (meetingSessionsRes.data || [])
                 .sort((a: any, b: any) => new Date(a.date_start).getTime() - new Date(b.date_start).getTime());
 
-            if (new Date(requestedSession.date_start).getTime() > Date.now()) {
-                const past = availableSessions.filter((item: any) => new Date(item.date_start).getTime() <= Date.now());
-                if (past.length) activeSessionKey = String(past[past.length - 1].session_key);
-            }
+
         }
     }
 
@@ -351,6 +745,33 @@ export const getRaceDetails = async (sessionKey: string) => {
             circuitInfo = circuitInfoRes?.data || null;
         }
     }
+
+    const isUpcoming = Boolean(
+        sessionInfo?.date_start
+        && new Date(sessionInfo.date_start).getTime() > Date.now()
+    );
+
+    if (isUpcoming) {
+        return {
+            active_session_key: undefined,
+            isUpcoming: true,
+            isRace,
+            sessionInfo,
+            meetingInfo,
+            circuitInfo,
+            availableSessions,
+            results: [],
+            raceControl: [],
+            weather: null,
+            sessionBests: null,
+            maxRaceLap: 0,
+            scheduledTotalLaps: null
+        };
+    }
+
+    const scheduledTotalLaps = isRace
+        ? await getScheduledTotalLaps(sessionInfo)
+        : null;
 
     const sessionYear = Number(sessionInfo.year)
         || (sessionInfo.date_start ? new Date(sessionInfo.date_start).getUTCFullYear() : new Date().getUTCFullYear());
@@ -424,6 +845,7 @@ export const getRaceDetails = async (sessionKey: string) => {
             championshipDrivers: championshipDriversRes.data || [],
             championshipTeams: championshipTeamsRes.data || [],
             remainingChampionshipPoints,
+            scheduledTotalLaps,
             isRace
         })
     };
