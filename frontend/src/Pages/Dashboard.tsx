@@ -6,6 +6,7 @@ import { WeatherCard, SessionBestsCard, RaceControlWidget, DriverExpandedRow } f
 import { getTyreColor } from '../Utils/helpers';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
+import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
 import { getQualifyingPhaseClock } from '../Utils/sessionTiming';
 
 export const Dashboard = () => {
@@ -36,6 +37,7 @@ export const Dashboard = () => {
 
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const broadcastDelaySeconds = useRaceStore(state => state.broadcastDelaySeconds);
     const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
 
     useEffect(() => {
@@ -92,8 +94,11 @@ export const Dashboard = () => {
     const scheduledSessionDurationMs = Number.isFinite(sessionStartMs) && Number.isFinite(sessionEndMs)
         ? Math.max(0, sessionEndMs - sessionStartMs)
         : 0;
+    const livePresentationNow = isLiveSession
+        ? sessionClockNow - (broadcastDelaySeconds * 1000)
+        : sessionClockNow;
     const remainingSessionMs = isLiveSession && Number.isFinite(sessionEndMs)
-        ? Math.max(0, sessionEndMs - sessionClockNow)
+        ? Math.max(0, sessionEndMs - livePresentationNow)
         : scheduledSessionDurationMs;
     const formatSessionClock = (durationMs: number) => {
         if (!Number.isFinite(durationMs) || durationMs <= 0) return '--:--';
@@ -110,7 +115,7 @@ export const Dashboard = () => {
             sessionName: activeSessionInfo?.session_name,
             sessionType: activeSessionInfo?.session_type,
             raceControl: activeRaceControl,
-            nowMs: sessionClockNow
+            nowMs: livePresentationNow
         })
         : null;
     const displayedSessionClock = qualifyingPhaseClock
@@ -382,7 +387,8 @@ export const Dashboard = () => {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap justify-end">
+                        {isLiveSession && <BroadcastSyncControl />}
                         {isLiveSession && (
                             <Link
                                 to={`/race/${sessionKey}/tracker`}
