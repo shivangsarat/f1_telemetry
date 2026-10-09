@@ -661,8 +661,37 @@ export const getTeamSeasonProfile = async (constructorId: string) => {
     };
 };
 
-export const getRaceDetails = async (sessionKey: string) => {
-    const ttl = sessionKey === 'latest' ? 5000 : 86400000;
+export const getCurrentLiveSession = async () => {
+    const now = Date.now();
+    const currentYear = new Date(now).getUTCFullYear();
+
+    const sessionsRes = await getCached(
+        `current_live_sessions_${currentYear}`,
+        15000,
+        () => openF1Request(`${OPENF1_BASE}/sessions?year=${currentYear}`)
+    );
+
+    const sessions = (sessionsRes?.data || [])
+        .filter((session: any) => {
+            const start = new Date(session.date_start || 0).getTime();
+            const end = new Date(session.date_end || 0).getTime();
+
+            if (!Number.isFinite(start) || start > now) return false;
+
+            // Most OpenF1 sessions expose date_end. If it is temporarily absent,
+            // keep a recently-started session eligible for a bounded window.
+            if (Number.isFinite(end) && end > 0) return now <= end;
+            return now - start <= 12 * 60 * 60 * 1000;
+        })
+        .sort((a: any, b: any) =>
+            new Date(b.date_start || 0).getTime() - new Date(a.date_start || 0).getTime()
+        );
+
+    return sessions[0] || null;
+};
+
+export const getRaceDetails = async (sessionKey: string, liveOverride = false) => {
+    const ttl = sessionKey === 'latest' || liveOverride ? 5000 : 86400000;
     let activeSessionKey = sessionKey;
     let availableSessions: any[] = [];
 
