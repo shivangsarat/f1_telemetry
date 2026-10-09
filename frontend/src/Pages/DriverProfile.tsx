@@ -329,11 +329,22 @@ export const DriverProfile = () => {
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
-    const sharedWindowMin = Math.max(0, currentSliderVal);
-    const sharedWindowMax = sharedWindowMin + VIEWPORT_LAPS;
-    const sharedPlayheadX = isAutoScroll
-        ? maxLapX
-        : Math.min(maxLapX || sharedWindowMax, sharedWindowMin + (VIEWPORT_LAPS * 0.75));
+    // Comparison charts keep their original full-session scale by default.
+    // They only follow the 3-lap window after the user manually moves the
+    // Lap Window slider. This is particularly important live, where the full
+    // position/lap-time overview should not continuously zoom with telemetry.
+    const sharedWindowMin = !isAutoScroll ? Math.max(0, currentSliderVal) : undefined;
+    const sharedWindowMax = !isAutoScroll && sharedWindowMin !== undefined
+        ? sharedWindowMin + VIEWPORT_LAPS
+        : undefined;
+
+    // For historical tracker playback the slider value itself is the playhead.
+    // Previously we used a point 75% through the window, so "Lap 25.3" could
+    // move the car to roughly Lap 27.5 instead.
+    const sharedPlayheadX = Math.min(
+        maxLapX || currentSliderVal,
+        Math.max(0, currentSliderVal)
+    );
 
     const historicalTracker = !isLive ? (() => {
         const telemetry = Array.isArray(histPayload.telemetry) ? histPayload.telemetry : [];
