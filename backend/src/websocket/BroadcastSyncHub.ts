@@ -111,21 +111,13 @@ export class BroadcastSyncHub {
 
     private resetForSession(sessionKey: string | null) {
         if (!sessionKey || sessionKey === this.sessionKey) return;
-        this.sessionKey = sessionKey;
-        this.raceHistory.length = 0;
-        this.telemetryHistory.clear();
-        this.driverStateHistory.clear();
-        this.lastRaceStoredAt = 0;
 
-        const now = Date.now();
-        for (const state of this.clients.values()) {
-            const target = now - state.delayMs;
-            state.raceCursor = target;
-            for (const driver of state.subscribedDrivers) {
-                state.driverStateCursor.set(driver, target);
-                state.telemetryCursor.set(driver, target);
-            }
-        }
+        // Do not clear the rolling buffer at a source-session boundary. Delayed
+        // clients may still be presenting the final seconds of the previous
+        // session and must be allowed to cross the boundary naturally at T-delay.
+        // Old entries age out through the normal history window.
+        this.sessionKey = sessionKey;
+        this.lastRaceStoredAt = 0;
     }
 
     recordRace(message: any) {
