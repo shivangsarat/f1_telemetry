@@ -6,6 +6,7 @@ import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, Pit
 import { SectorBlock } from '../Components/TelemetryWidgets';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
+import { getQualifyingPhaseClock } from '../Utils/sessionTiming';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
@@ -313,9 +314,18 @@ export const DriverProfile = () => {
             : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     };
 
-    const displayedSessionTime = formatSessionClock(
-        isLive ? sessionRemainingMs : sessionDurationMs
-    );
+    const qualifyingPhaseClock = isLive
+        ? getQualifyingPhaseClock({
+            sessionName: activeSessionInfo?.session_name,
+            sessionType: activeSessionInfo?.session_type,
+            raceControl: liveRace?.raceControl || [],
+            nowMs: sessionClockNow
+        })
+        : null;
+
+    const displayedSessionTime = qualifyingPhaseClock
+        ? formatSessionClock(qualifyingPhaseClock.remainingMs)
+        : formatSessionClock(isLive ? sessionRemainingMs : sessionDurationMs);
     const deletedLapByNumber = new Map<number, any>(
         (currentDriverInfo?.lapsHistory || [])
             .filter((lap: any) => lap?.is_deleted)
@@ -324,6 +334,10 @@ export const DriverProfile = () => {
 
     const activeData = isLive ? liveData : histPayload;
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
+    const sharedWindowMin = !isAutoScroll ? Math.max(0, currentSliderVal) : undefined;
+    const sharedWindowMax = !isAutoScroll && sharedWindowMin !== undefined
+        ? sharedWindowMin + VIEWPORT_LAPS
+        : undefined;
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
@@ -461,11 +475,20 @@ export const DriverProfile = () => {
                                 title={isLive ? 'Session time remaining' : 'Scheduled session duration'}
                             >
                                 <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
-                                    {isLive ? 'Session Time' : 'Duration'}
+                                    {qualifyingPhaseClock
+                                        ? `${qualifyingPhaseClock.label} Time`
+                                        : isLive
+                                            ? 'Session Time'
+                                            : 'Duration'}
                                 </span>
                                 <span className="font-mono text-sm font-black text-white tabular-nums">
                                     {displayedSessionTime}
                                 </span>
+                                {qualifyingPhaseClock?.isPaused && (
+                                    <span className="text-[8px] font-black uppercase tracking-widest text-yellow-300">
+                                        Paused
+                                    </span>
+                                )}
                             </div>
                             <div
                                 className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
@@ -713,7 +736,9 @@ export const DriverProfile = () => {
                             <AllDriversPaceChart 
                                 activeResults={activeResults} 
                                 currentDriverNumber={driverNumber} 
-                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)} 
+                                maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                                windowMin={sharedWindowMin}
+                                windowMax={sharedWindowMax}
                             />
                         </div>
 
@@ -803,6 +828,8 @@ export const DriverProfile = () => {
                         activeResults={activeResults}
                         currentDriverNumber={driverNumber}
                         maxRaceLap={isLive ? (liveRace?.maxRaceLap || activeData.laps?.length || 1) : (raceDetails?.maxRaceLap || activeData.laps?.length || 1)}
+                        windowMin={sharedWindowMin}
+                        windowMax={sharedWindowMax}
                     />
                 </div>
             </div>
