@@ -609,25 +609,36 @@ export class LiveSessionEngine {
         // driver's best valid lap. Timing memory is applied after the raw pure
         // calculation, so we must re-rank after restoring a driver's persisted PB;
         // otherwise a restored 1:33 can remain below a stale 1:35 position.
-        const ranked = [...rememberedResults].sort((a: any, b: any) => {
-            const aBest = Number(a.best_lap_raw);
-            const bBest = Number(b.best_lap_raw);
-            const aValid = Number.isFinite(aBest) && aBest > 0;
-            const bValid = Number.isFinite(bBest) && bBest > 0;
+        const ranked = [...rememberedResults]
+            .sort((a: any, b: any) => {
+                const aBest = Number(a.best_lap_raw);
+                const bBest = Number(b.best_lap_raw);
+                const aValid = Number.isFinite(aBest) && aBest > 0;
+                const bValid = Number.isFinite(bBest) && bBest > 0;
 
-            if (aValid && bValid) return aBest - bBest;
-            if (aValid) return -1;
-            if (bValid) return 1;
-            return Number(a.position || 999) - Number(b.position || 999);
+                if (aValid && bValid) return aBest - bBest;
+                if (aValid) return -1;
+                if (bValid) return 1;
+                return Number(a.position || 999) - Number(b.position || 999);
+            })
+            .map((result: any) => ({ ...result }));
+
+        const timedResults = ranked.filter((result: any) => {
+            const best = Number(result.best_lap_raw);
+            return Number.isFinite(best) && best > 0;
         });
+        const leaderBest = Number(timedResults[0]?.best_lap_raw);
 
-        const leaderBest = Number(ranked.find((result: any) =>
-            Number.isFinite(Number(result.best_lap_raw))
-            && Number(result.best_lap_raw) > 0
-        )?.best_lap_raw);
-
+        // Rebuild the entire non-race tower atomically from the same set of
+        // persisted PBs. Never carry an interval/gap forward from the previous
+        // snapshot: one new PB can change the leader gap for every timed driver
+        // and can change neighbour intervals wherever the ordering moves.
         ranked.forEach((result: any, index: number) => {
             result.position = index + 1;
+            result.interval_estimated = false;
+            result.gap_estimated = false;
+            result.interval_source = 'best_lap_classification';
+            result.gap_source = 'best_lap_classification';
 
             const currentBest = Number(result.best_lap_raw);
             if (!Number.isFinite(currentBest) || currentBest <= 0 || !Number.isFinite(leaderBest)) {
@@ -643,9 +654,9 @@ export class LiveSessionEngine {
             }
 
             const previousBest = Number(ranked[index - 1]?.best_lap_raw);
-            result.gap_to_leader = `+${(currentBest - leaderBest).toFixed(3)}s`;
+            result.gap_to_leader = `+${Math.max(0, currentBest - leaderBest).toFixed(3)}s`;
             result.interval = Number.isFinite(previousBest) && previousBest > 0
-                ? `+${(currentBest - previousBest).toFixed(3)}s`
+                ? `+${Math.max(0, currentBest - previousBest).toFixed(3)}s`
                 : '-';
         });
 
