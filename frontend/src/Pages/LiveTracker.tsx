@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useRaceStore } from '../store/useRaceStore';
 import { LiveTrackMap } from '../Components/LiveTrackMap';
+import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
 
 export const LiveTracker = () => {
     const { sessionKey } = useParams();
@@ -31,11 +32,14 @@ export const LiveTracker = () => {
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-800 bg-gray-900">
-                    <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                    <span className="text-[10px] uppercase tracking-widest font-bold text-gray-400">
-                        {connected ? 'Streaming' : 'Disconnected'}
-                    </span>
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                    {isLive && <BroadcastSyncControl />}
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-800 bg-gray-900">
+                        <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                        <span className="text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                            {connected ? 'Streaming' : 'Disconnected'}
+                        </span>
+                    </div>
                 </div>
             </div>
 
