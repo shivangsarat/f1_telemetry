@@ -53,6 +53,7 @@ export class LiveSessionEngine {
     private readonly listeners = new Set<(snapshot: any) => void>();
     private readonly driverListeners = new Map<number, Set<(payload: any) => void>>();
     private readonly carData = new Map<number, any[]>();
+    private readonly carDataIngestedAt = new Map<number, number>();
     private readonly locationHistory = new Map<number, any[]>();
     private readonly latestLocations = new Map<number, any>();
     private readonly driverPitState = new Map<number, boolean>();
@@ -315,6 +316,7 @@ export class LiveSessionEngine {
         };
         this.maps.forEach(map => map.clear());
         this.carData.clear();
+        this.carDataIngestedAt.clear();
         this.locationHistory.clear();
         this.latestLocations.clear();
         this.driverPitState.clear();
@@ -376,6 +378,7 @@ export class LiveSessionEngine {
         // without retaining an unbounded stream forever.
         if (history.length > 30_000) history.splice(0, history.length - 30_000);
         this.carData.set(dNum, history);
+        this.carDataIngestedAt.set(dNum, Date.now());
 
         this.updatePitStateFromTelemetry(dNum, row);
         if (emit) this.emitLatestTelemetry(dNum);
@@ -826,6 +829,10 @@ export class LiveSessionEngine {
                 tracker: this.getTrackerSnapshot(calculated.results || [])
             }
         };
+    }
+
+    getDriverCarDataIngestedAt(driverNumber: number) {
+        return this.carDataIngestedAt.get(driverNumber) || 0;
     }
 
     getTrackerSnapshotAt(cutoffMs?: number) {
