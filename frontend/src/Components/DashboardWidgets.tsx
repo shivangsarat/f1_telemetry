@@ -483,19 +483,7 @@ const getTeamVariant = (driver: any, drivers: any[]) => {
     return Math.max(0, teammates.findIndex(item => Number(item.driver_number) === Number(driver.driver_number)));
 };
 
-export const AllDriversPaceChart = ({
-    activeResults,
-    currentDriverNumber,
-    maxRaceLap,
-    windowMin,
-    windowMax
-}: {
-    activeResults: any[];
-    currentDriverNumber: number;
-    maxRaceLap: number;
-    windowMin?: number;
-    windowMax?: number;
-}) => {
+export const AllDriversPaceChart = ({ activeResults, currentDriverNumber, maxRaceLap }: { activeResults: any[], currentDriverNumber: number, maxRaceLap: number }) => {
     const chartRef = useRef<HTMLDivElement>(null);
     const plotInstance = useRef<uPlot | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
@@ -601,25 +589,6 @@ export const AllDriversPaceChart = ({
         return () => plotInstance.current?.destroy();
     }, [activeResults, currentDriverNumber, maxRaceLap, hiddenDrivers]);
 
-    useEffect(() => {
-        if (!plotInstance.current) return;
-
-        const fullMax = Math.max(
-            Number(maxRaceLap || 0),
-            ...activeResults.map(driver =>
-                Math.max(0, ...(driver.lapsHistory || []).map((lap: any) => Number(lap.lap_number || 0)))
-            )
-        );
-
-        if (!Number.isFinite(Number(windowMin)) || !Number.isFinite(Number(windowMax))) {
-            if (fullMax > 0) plotInstance.current.setScale('x', { min: 1, max: fullMax });
-            return;
-        }
-
-        if (Number(windowMax) <= Number(windowMin)) return;
-        plotInstance.current.setScale('x', { min: Number(windowMin), max: Number(windowMax) });
-    }, [windowMin, windowMax, activeResults, hiddenDrivers, maxRaceLap]);
-
     const filteredDrivers = activeResults.filter(d => 
         (d.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
         String(d.driver_number).includes(searchQuery)
@@ -723,15 +692,11 @@ const formatChartLapTime = (seconds: number | null | undefined) => {
 export const AllDriversLapTimesChart = ({
     activeResults,
     currentDriverNumber,
-    maxRaceLap,
-    windowMin,
-    windowMax
+    maxRaceLap
 }: {
     activeResults: any[];
     currentDriverNumber: number;
     maxRaceLap: number;
-    windowMin?: number;
-    windowMax?: number;
 }) => {
     const chartRef = useRef<HTMLDivElement>(null);
     const plotRef = useRef<uPlot | null>(null);
@@ -814,25 +779,6 @@ export const AllDriversLapTimesChart = ({
             plotRef.current = null;
         };
     }, [activeResults, currentDriverNumber, maxRaceLap, hiddenDrivers]);
-
-    useEffect(() => {
-        if (!plotRef.current) return;
-
-        const fullMax = Math.max(
-            Number(maxRaceLap || 0),
-            ...activeResults.map(driver =>
-                Math.max(0, ...(driver.lapsHistory || []).map((lap: any) => Number(lap.lap_number || 0)))
-            )
-        );
-
-        if (!Number.isFinite(Number(windowMin)) || !Number.isFinite(Number(windowMax))) {
-            if (fullMax > 0) plotRef.current.setScale('x', { min: 1, max: fullMax });
-            return;
-        }
-
-        if (Number(windowMax) <= Number(windowMin)) return;
-        plotRef.current.setScale('x', { min: Number(windowMin), max: Number(windowMax) });
-    }, [windowMin, windowMax, activeResults, hiddenDrivers, maxRaceLap]);
 
     const filteredDrivers = activeResults.filter(driver =>
         (driver.name || '').toLowerCase().includes(searchQuery.toLowerCase())
