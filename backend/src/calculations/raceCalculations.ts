@@ -428,9 +428,34 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
                 const candidates = orderedLaps.filter(l => parseDate(l.date_start) <= time);
                 const current = candidates[candidates.length - 1];
                 if (!current) return null;
-                const start = parseDate(current.date_start);
-                const estimate = num(current.lap_duration, lastCompletedDuration) || lastCompletedDuration;
-                lapX = num(current.lap_number) + Math.max(0, Math.min(0.999, (time - start) / (estimate * 1000)));
+
+                const currentStart = parseDate(current.date_start);
+                const currentDuration = num(current.lap_duration);
+                const estimate = currentDuration > 0 ? currentDuration : lastCompletedDuration;
+
+                if (currentDuration > 0) {
+                    const completedEnd = currentStart + currentDuration * 1000;
+
+                    // OpenF1 commonly does not emit the next lap row until later in
+                    // the lap. Telemetry arriving after the last completed lap used
+                    // to clamp permanently to N.999, which rendered all live samples
+                    // as one vertical line. Treat the completed lap end as the next
+                    // lap start until the proper lap row arrives.
+                    if (time > completedEnd) {
+                        const nextLapNumber = num(current.lap_number) + 1;
+                        const nextLapProgress = Math.max(
+                            0,
+                            Math.min(0.999, (time - completedEnd) / (Math.max(1, lastCompletedDuration) * 1000))
+                        );
+                        lapX = nextLapNumber + nextLapProgress;
+                    } else {
+                        lapX = num(current.lap_number)
+                            + Math.max(0, Math.min(0.999, (time - currentStart) / (estimate * 1000)));
+                    }
+                } else {
+                    lapX = num(current.lap_number)
+                        + Math.max(0, Math.min(0.999, (time - currentStart) / (Math.max(1, estimate) * 1000)));
+                }
             }
 
             const speed = num(t.speed);
