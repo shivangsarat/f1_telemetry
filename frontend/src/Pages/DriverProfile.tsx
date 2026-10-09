@@ -13,6 +13,43 @@ import 'uplot/dist/uPlot.min.css';
 
 const VIEWPORT_LAPS = 3;
 
+// uPlot's default numeric split generator can throw RangeError: Invalid array
+// length when a transient live scale becomes degenerate/extreme. Keep the
+// driver telemetry axes bounded to a small, deterministic number of ticks.
+const safeNumericSplits = (
+    _u: uPlot,
+    _axisIdx: number,
+    scaleMin: number,
+    scaleMax: number
+) => {
+    const min = Number(scaleMin);
+    const max = Number(scaleMax);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return [];
+
+    const span = max - min;
+    if (!Number.isFinite(span) || span <= 0 || span > 1_000_000) return [];
+
+    const targetTicks = 6;
+    const roughStep = span / targetTicks;
+    const power = Math.pow(10, Math.floor(Math.log10(Math.max(roughStep, Number.EPSILON))));
+    const normalized = roughStep / power;
+    const nice = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    const step = nice * power;
+
+    if (!Number.isFinite(step) || step <= 0) return [];
+
+    const start = Math.ceil(min / step) * step;
+    const splits: number[] = [];
+
+    // Hard cap prevents malformed scales from ever allocating an unbounded
+    // split array, which was crashing the Chromium renderer in production.
+    for (let value = start, i = 0; value <= max + step * 0.25 && i < 12; value += step, i += 1) {
+        splits.push(Number(value.toFixed(6)));
+    }
+
+    return splits;
+};
+
 const getTyreColor = (compound: string) => {
     const colors: Record<string, string> = { SOFT: '#FF3333', MEDIUM: '#FFFF00', HARD: '#FFFFFF', INTERMEDIATE: '#33CC33', WET: '#0066FF' };
     return colors[compound?.toUpperCase()] || '#888888';
@@ -134,7 +171,11 @@ export const DriverProfile = () => {
             width, height: 300,
             legend: { show: false },
             cursor: { x: true, y: false, sync: { key: 'telemetry' } },
-            axes: [{ stroke: "#ccc" }, { stroke: "#00ff00", scale: "speed" }, { side: 1, stroke: "#ff00ff", grid: { show: false }, scale: "rpm" }],
+            axes: [
+                { stroke: "#ccc", splits: safeNumericSplits },
+                { stroke: "#00ff00", scale: "speed", splits: safeNumericSplits },
+                { side: 1, stroke: "#ff00ff", grid: { show: false }, scale: "rpm", splits: safeNumericSplits }
+            ],
             series: [{}, { label: "Speed", stroke: "#00ff00", scale: "speed" }, { label: "RPM", stroke: "#ff00ff", scale: "rpm" }],
             scales: { x: { time: false, auto: false }, speed: { auto: true }, rpm: { auto: true } },
             hooks: { setCursor: [syncLegendHook] }
@@ -144,7 +185,11 @@ export const DriverProfile = () => {
             width, height: 250,
             legend: { show: false },
             cursor: { x: true, y: false, sync: { key: 'telemetry' } },
-            axes: [{ stroke: "#ccc" }, { stroke: "#00aaff", scale: "pct" }, { side: 1, stroke: "#ffaa00", grid: { show: false }, scale: "gear" }],
+            axes: [
+                { stroke: "#ccc", splits: safeNumericSplits },
+                { stroke: "#00aaff", scale: "pct", splits: safeNumericSplits },
+                { side: 1, stroke: "#ffaa00", grid: { show: false }, scale: "gear", splits: safeNumericSplits }
+            ],
             series: [{}, { label: "Throttle", stroke: "#00aaff", scale: "pct" }, { label: "Brake", stroke: "#ff3333", scale: "pct" }, { label: "Gear", stroke: "#ffaa00", scale: "gear" }],
             scales: { x: { time: false, auto: false }, pct: { min: 0, max: 105 }, gear: { min: 0, max: 9 } },
             hooks: { setCursor: [syncLegendHook] }
