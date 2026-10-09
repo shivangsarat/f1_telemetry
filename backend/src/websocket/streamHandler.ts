@@ -20,11 +20,105 @@ export const setupWebSocket = async (server: any) => {
     const clientDelayTimers = new Map<WebSocket, Set<ReturnType<typeof setTimeout>>>();
     const clientConfiguredDelay = new Set<WebSocket>();
 
+    // Keep a small rolling presentation buffer so a client that enables
+    // Broadcast Sync can immediately start at T-delay and replay forward,
+    // instead of showing one delayed frame and then freezing for the full
+    // configured delay while the normal delayed stream catches up.
+    const raceSnapshotHistory: Array<{ timestamp: number; snapshot: any }> = [];
+    const SNAPSHOT_HISTORY_MS = 130_000;
+    const SNAPSHOT_SAMPLE_MS = 250;
+    let lastRecordedSnapshotAt = 0;
+
+    const recordRaceSnapshot = (snapshot: any) => {
+        const timestamp = Number(snapshot?.timestamp) || Date.now();
+
+        // Tracker snapshots can arrive at high frequency. 250ms is enough to
+        // keep motion smooth while bounding memory/timer pressure.
+        if (timestamp - lastRecordedSnapshotAt < SNAPSHOT_SAMPLE_MS) return;
+        lastRecordedSnapshotAt = timestamp;
+
+        raceSnapshotHistory.push({ timestamp, snapshot });
+        const cutoff = timestamp - SNAPSHOT_HISTORY_MS;
+        while (raceSnapshotHistory.length > 1 && raceSnapshotHistory[0].timestamp < cutoff) {
+            raceSnapshotHistory.shift();
+        }
+    };
+
     const clearClientDelayTimers = (client: WebSocket) => {
         const timers = clientDelayTimers.get(client);
         if (timers) {
             for (const timer of timers) clearTimeout(timer);
             timers.clear();
+        }
+    };
+
+    const scheduleClientPayload = (client: WebSocket, payload: string, delayMs: number) => {
+        if (delayMs <= 0) {
+            if (client.readyState === WebSocket.OPEN) client.send(payload);
+            return;
+        }
+
+        const timers = clientDelayTimers.get(client) || new Set<ReturnType<typeof setTimeout>>();
+        clientDelayTimers.set(client, timers);
+
+        const timer = setTimeout(() => {
+            timers.delete(timer);
+            if (client.readyState === WebSocket.OPEN) client.send(payload);
+        }, delayMs);
+        timers.add(timer);
+    };
+
+    const replayBufferedRaceState = (client: WebSocket, delayMs: number) => {
+        const now = Date.now();
+        const target = now - Math.max(0, delayMs);
+        const current = engine.getSnapshot();
+
+        if (delayMs <= 0) {
+            sendClient(client, current, true);
+            return;
+        }
+
+        const sameSessionHistory = raceSnapshotHistory.filter(entry =>
+            !current?.sessionKey
+            || !entry.snapshot?.sessionKey
+            || String(entry.snapshot.sessionKey) === String(current.sessionKey)
+        );
+
+        let bootstrapEntry: { timestamp: number; snapshot: any } | undefined;
+        for (const entry of sameSessionHistory) {
+            if (entry.timestamp <= target) bootstrapEntry = entry;
+            else break;
+        }
+
+        // If the backend has not itself been alive for the whole configured
+        // delay, use the oldest available race snapshot for metadata/state and
+        // reconstruct the tracker specifically at T-delay from retained location
+        // history. This still avoids an empty/frozen full-map page.
+        const baseSnapshot = bootstrapEntry?.snapshot
+            || sameSessionHistory[0]?.snapshot
+            || current;
+
+        const bootstrap = {
+            ...baseSnapshot,
+            timestamp: target,
+            data: {
+                ...(baseSnapshot?.data || current?.data || {}),
+                tracker: engine.getTrackerSnapshotAt(target)
+            }
+        };
+
+        sendClient(client, bootstrap, true);
+
+        // Replay already-buffered snapshots in wall-clock order. Example:
+        // with a 42s delay, T-42 is sent immediately, T-41 one second later,
+        // ... and the normal live message received at T is already scheduled by
+        // sendClient for T+42. There is therefore no 42-second dead period.
+        const replayFrom = bootstrapEntry?.timestamp ?? target;
+        for (const entry of sameSessionHistory) {
+            if (entry.timestamp <= replayFrom || entry.timestamp > now) continue;
+            const offset = Math.max(0, entry.timestamp - target);
+            if (offset > delayMs) continue;
+            scheduleClientPayload(client, JSON.stringify(entry.snapshot), offset);
         }
     };
 
@@ -53,13 +147,7 @@ export const setupWebSocket = async (server: any) => {
             return;
         }
 
-        const timers = clientDelayTimers.get(client) || new Set<ReturnType<typeof setTimeout>>();
-        clientDelayTimers.set(client, timers);
-        const timer = setTimeout(() => {
-            timers.delete(timer);
-            if (client.readyState === WebSocket.OPEN) client.send(payload);
-        }, delay);
-        timers.add(timer);
+        scheduleClientPayload(client, payload, delay);
     };
 
     const sendCurrentClientState = (client: WebSocket) => {
@@ -76,6 +164,7 @@ export const setupWebSocket = async (server: any) => {
 
     const broadcastSnapshot = () => {
         const snapshot = engine.getSnapshot();
+        recordRaceSnapshot(snapshot);
         wss.clients.forEach(client => sendClient(client, snapshot));
     };
 
@@ -83,6 +172,7 @@ export const setupWebSocket = async (server: any) => {
         if (engineBroadcastBound) return;
         engineBroadcastBound = true;
         engine.subscribe(snapshot => {
+            recordRaceSnapshot(snapshot);
             wss.clients.forEach(client => sendClient(client, snapshot));
         });
     };
@@ -136,26 +226,24 @@ export const setupWebSocket = async (server: any) => {
                         sessionKey: clientDelaySessionKey.get(ws)
                     }, true);
 
-                    const trackerCutoffMs = seconds > 0
+                    // Start presentation immediately at T-delay, then replay the
+                    // already-buffered race/tracker snapshots at their original
+                    // cadence until they meet the normal delayed live stream.
+                    replayBufferedRaceState(ws, seconds * 1000);
+
+                    // Existing driver subscriptions still get a delay-aligned
+                    // bootstrap immediately; future driver telemetry continues
+                    // through the normal delayed stream/fallback path.
+                    const driverCutoffMs = seconds > 0
                         ? Date.now() - (seconds * 1000)
                         : undefined;
-
-                    // The full tracker page can be opened after Broadcast Sync is
-                    // already configured. Bootstrap it immediately at T-delay so
-                    // it does not first show realtime positions and then appear
-                    // frozen while the delayed stream fills.
-                    sendClient(ws, {
-                        type: 'LIVE_TRACKER_STATE',
-                        sessionKey: clientDelaySessionKey.get(ws)
-                            || (engine.getSnapshot()?.sessionKey != null ? String(engine.getSnapshot().sessionKey) : null),
-                        timestamp: Date.now(),
-                        data: engine.getTrackerSnapshotAt(trackerCutoffMs)
-                    }, true);
-
-                    // With no delay this catches the UI up immediately. When a
-                    // delay is enabled, future race/tracker updates continue on
-                    // the normal delayed presentation timeline.
-                    sendCurrentClientState(ws);
+                    for (const driver of clientDriverSubs.get(ws) || []) {
+                        sendClient(
+                            ws,
+                            engine.getDriverSnapshot(driver, true, driverCutoffMs),
+                            true
+                        );
+                    }
                     return;
                 }
 
