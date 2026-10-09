@@ -64,7 +64,12 @@ export class LiveSessionEngine {
 
     hydrate(calculated: any, sessionKey?: string | number | null) {
         if (!calculated || typeof calculated !== 'object') return;
-        if (sessionKey != null) this.activeSessionKey = String(sessionKey);
+
+        const nextKey = sessionKey != null ? String(sessionKey) : null;
+        if (nextKey && this.activeSessionKey && nextKey !== this.activeSessionKey) {
+            this.reset();
+        }
+        if (nextKey) this.activeSessionKey = nextKey;
 
         this.state.sessionInfo = calculated.sessionInfo || this.state.sessionInfo;
         this.state.weather = calculated.weather ?? this.state.weather;
@@ -175,9 +180,27 @@ export class LiveSessionEngine {
 
     private handleSession(session: any) {
         const nextKey = session.session_key != null ? String(session.session_key) : null;
+
+        // MQTT can deliver a stale/retained session announcement after REST has
+        // already moved us onto the current session. Never let an older session
+        // switch the engine backwards.
         if (nextKey && this.activeSessionKey && nextKey !== this.activeSessionKey) {
+            const currentStart = new Date(this.state.sessionInfo?.date_start || 0).getTime();
+            const incomingStart = new Date(session?.date_start || 0).getTime();
+
+            if (
+                Number.isFinite(currentStart)
+                && currentStart > 0
+                && Number.isFinite(incomingStart)
+                && incomingStart > 0
+                && incomingStart < currentStart
+            ) {
+                return;
+            }
+
             this.reset();
         }
+
         if (nextKey) this.activeSessionKey = nextKey;
         this.state.sessionInfo = { ...this.state.sessionInfo, ...session };
     }
