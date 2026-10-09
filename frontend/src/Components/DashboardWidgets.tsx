@@ -431,11 +431,28 @@ export const TyreHistoryWidget = ({ driver }: { driver: any }) => {
 };
 
 export const PitHistoryWidget = ({ driver }: { driver: any }) => {
-    if (!((driver && driver.tyreHistory && driver.tyreHistory.pit_stops && driver.tyreHistory.pit_stops.length > 0) || (driver.tyreHistory.stints && driver.tyreHistory.stints.length > 1))) return null;
+    const hasHistory = Boolean(
+        driver?.tyreHistory?.pit_stops?.length > 0
+        || driver?.tyreHistory?.stints?.length > 1
+    );
+    if (!driver?.in_pit && !hasHistory) return null;
+
+    const activePit = driver?.active_pit;
+
     return (
         <div className="flex items-start gap-4 pt-4 border-t border-gray-800">
             <span className="font-bold text-gray-400 w-12 text-xs uppercase tracking-wider mt-1">Pits:</span>
             <div className="flex flex-wrap gap-2">
+                {driver?.in_pit && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/40 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[110px]">
+                        <span className="text-[10px] font-black text-yellow-300 uppercase tracking-widest mb-1">
+                            In Pit{activePit?.lap ? ` · Lap ${activePit.lap}` : ''}
+                        </span>
+                        <span className="text-[9px] text-yellow-200/70 uppercase tracking-wider">
+                            Stop in progress
+                        </span>
+                    </div>
+                )}
                 {driver.tyreHistory.pit_stops && driver.tyreHistory.pit_stops.length > 0 ? (
                     driver.tyreHistory.pit_stops.map((p: any, i: number) => (
                         <div key={i} className="bg-gray-800 border border-gray-700 font-mono px-3 py-1.5 rounded flex flex-col gap-0.5 min-w-[100px]">
