@@ -4,7 +4,7 @@ import { ITelemetryProvider } from '../providers/ITelemetryProvider';
 import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
-import { getCurrentLiveSession, getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
+import { getCleanTelemetry, getCurrentLiveSession, getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
 
 export const setupWebSocket = async (server: any) => {
     // Attach WebSocket handling immediately. Provider/bootstrap initialization may
@@ -173,11 +173,78 @@ export const setupWebSocket = async (server: any) => {
                     // window. The engine already retains raw car/lap/location
                     // history, so bootstrap the page immediately at T-delay, then
                     // continue with normally delayed live updates.
-                    sendClient(
-                        ws,
-                        engine.getDriverSnapshot(driver, true, cutoffMs),
-                        true
-                    );
+                    const bootstrapSnapshot = engine.getDriverSnapshot(driver, true, cutoffMs);
+                    sendClient(ws, bootstrapSnapshot, true);
+
+                    // In production the backend may have joined the MQTT session
+                    // after this driver's recent car_data samples were published.
+                    // MQTT only provides future events, so the retained engine
+                    // history can legitimately be empty even though laps/results
+                    // are already populated. Bootstrap that missing telemetry once
+                    // from OpenF1 REST, still entirely through the backend.
+                    if (
+                        !Array.isArray(bootstrapSnapshot?.data?.telemetry)
+                        || bootstrapSnapshot.data.telemetry.length === 0
+                    ) {
+                        const activeKey = engine.getSnapshot()?.sessionKey;
+                        if (activeKey != null) {
+                            void getCleanTelemetry(String(activeKey), driver)
+                                .then(history => {
+                                    const delayedTelemetry = Array.isArray(history?.telemetry)
+                                        ? history.telemetry.filter((point: any) => {
+                                            if (!cutoffMs) return true;
+                                            const time = point?.date ? new Date(point.date).getTime() : NaN;
+                                            return Number.isFinite(time) && time <= cutoffMs;
+                                        })
+                                        : [];
+
+                                    const delayedLaps = Array.isArray(history?.laps)
+                                        ? history.laps.filter((lap: any) => {
+                                            if (!cutoffMs) return true;
+                                            const start = lap?.date_start ? new Date(lap.date_start).getTime() : NaN;
+                                            return Number.isFinite(start) && start <= cutoffMs;
+                                        })
+                                        : [];
+
+                                    const latestLapX = delayedTelemetry.length > 0
+                                        ? Number(delayedTelemetry[delayedTelemetry.length - 1]?.lapX)
+                                        : NaN;
+                                    const latestLap = Number.isFinite(latestLapX)
+                                        ? Math.max(1, Math.floor(latestLapX))
+                                        : Math.max(
+                                            0,
+                                            ...delayedLaps.map((lap: any) => Number(lap.lap_number || 0))
+                                        );
+
+                                    const delayedStints = Array.isArray(history?.stints)
+                                        ? history.stints.filter((stint: any) =>
+                                            Number(stint?.lap_start || 0) <= latestLap
+                                        )
+                                        : [];
+
+                                    if (delayedTelemetry.length === 0) return;
+
+                                    sendClient(ws, {
+                                        type: 'LIVE_DRIVER_STATE',
+                                        sessionKey: String(activeKey),
+                                        driver,
+                                        timestamp: Date.now(),
+                                        data: {
+                                            driver: bootstrapSnapshot?.data?.driver || null,
+                                            telemetry: delayedTelemetry,
+                                            laps: delayedLaps,
+                                            stints: delayedStints
+                                        }
+                                    }, true);
+                                })
+                                .catch(error => {
+                                    console.warn(
+                                        `⚠️ Unable to REST-bootstrap live telemetry for driver ${driver}:`,
+                                        error?.message || error
+                                    );
+                                });
+                        }
+                    }
 
                     ensureDriverEngineSubscription(ws, driver);
 
