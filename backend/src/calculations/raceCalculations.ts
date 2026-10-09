@@ -587,7 +587,11 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             driver_number: d,
             position,
             interval: intervalValue,
-            gap_to_leader: gapValue
+            gap_to_leader: gapValue,
+            interval_estimated: false,
+            gap_estimated: false,
+            interval_source: intervalValue !== null && intervalValue !== undefined ? 'openf1' : null,
+            gap_source: gapValue !== null && gapValue !== undefined ? 'openf1' : null
         };
     });
 
@@ -605,6 +609,8 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             && Number.isFinite(Number(current.gap_to_leader))
             && Number.isFinite(Number(ahead.gap_to_leader))) {
             current.interval = Number(current.gap_to_leader) - Number(ahead.gap_to_leader);
+            current.interval_estimated = true;
+            current.interval_source = 'derived_from_official_gaps';
         }
     }
 
@@ -640,11 +646,14 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             const total = cumulativeLapTimeByDriver[d];
 
             if (!Number.isFinite(Number(row.gap_to_leader))
+                && !Number.isFinite(Number(row.interval))
                 && leaderLapCount > 0
                 && lapCount === leaderLapCount
                 && Number.isFinite(total)
                 && Number.isFinite(leaderTotal)) {
                 row.gap_to_leader = Math.max(0, total - leaderTotal);
+                row.gap_estimated = true;
+                row.gap_source = 'derived_from_completed_laps';
             }
         }
 
@@ -659,6 +668,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
                 && Number.isFinite(Number(row.gap_to_leader))
                 && Number.isFinite(Number(ahead.gap_to_leader))) {
                 row.interval = Math.max(0, Number(row.gap_to_leader) - Number(ahead.gap_to_leader));
+                row.interval_estimated = true;
+                row.interval_source = row.gap_estimated || ahead.gap_estimated
+                    ? 'derived_from_estimated_gaps'
+                    : 'derived_from_official_gaps';
             }
         }
     }
@@ -825,6 +838,10 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
             total_time: carTotalTime,
             interval: isRace ? (officialPosition === 1 ? '-' : formatGap(row.interval)) : '-',
             gap_to_leader: isRace ? (officialPosition === 1 ? '-' : formatGap(row.gap_to_leader)) : '-',
+            interval_estimated: isRace ? Boolean(row.interval_estimated) : false,
+            gap_estimated: isRace ? Boolean(row.gap_estimated) : false,
+            interval_source: isRace ? row.interval_source : null,
+            gap_source: isRace ? row.gap_source : null,
             position: officialPosition,
             official_position: officialPosition,
             starting_position: startingPosition,
