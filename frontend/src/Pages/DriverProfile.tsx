@@ -212,8 +212,19 @@ export const DriverProfile = () => {
     useEffect(() => {
         if (processedData.length === 0) return;
 
+        const plausibleMaxLap = Math.max(
+            10,
+            Number(liveRace?.maxRaceLap || raceDetails?.maxRaceLap || 0) + 5,
+            Number(currentDriverInfo?.completed_laps || currentDriverInfo?.driver_laps || 0) + 5
+        );
+
         const validData = processedData
-            .filter((point: any) => Number.isFinite(Number(point?.lapX)))
+            .filter((point: any) => {
+                const lapX = Number(point?.lapX);
+                return Number.isFinite(lapX)
+                    && lapX >= 0
+                    && lapX <= Math.min(250, plausibleMaxLap);
+            })
             .sort((a: any, b: any) => Number(a.lapX) - Number(b.lapX));
 
         if (validData.length === 0) return;
@@ -239,7 +250,15 @@ export const DriverProfile = () => {
 
         const latest = validData[validData.length - 1];
         if (isAutoScroll && latest) updateLegendState(latest);
-    }, [processedData, isAutoScroll, updateLegendState]);
+    }, [
+        processedData,
+        isAutoScroll,
+        updateLegendState,
+        liveRace?.maxRaceLap,
+        raceDetails?.maxRaceLap,
+        currentDriverInfo?.completed_laps,
+        currentDriverInfo?.driver_laps
+    ]);
 
     useEffect(() => {
         let min = 0;
@@ -255,6 +274,10 @@ export const DriverProfile = () => {
         } else {
             min = manualMin;
             max = manualMin + VIEWPORT_LAPS;
+        }
+
+        if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min || max - min > 10) {
+            return;
         }
 
         plotInstance1.current?.setScale('x', { min, max });
