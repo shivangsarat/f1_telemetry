@@ -7,6 +7,7 @@ import { getTyreColor } from '../Utils/helpers';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
 import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
+import { getQualifyingPhaseClock } from '../Utils/sessionTiming';
 
 export const Dashboard = () => {
     const { sessionKey } = useParams();
@@ -109,7 +110,17 @@ export const Dashboard = () => {
             ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
             : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     };
-    const displayedSessionClock = formatSessionClock(remainingSessionMs);
+    const qualifyingPhaseClock = isLiveSession
+        ? getQualifyingPhaseClock({
+            sessionName: activeSessionInfo?.session_name,
+            sessionType: activeSessionInfo?.session_type,
+            raceControl: activeRaceControl,
+            nowMs: effectiveSessionNow
+        })
+        : null;
+    const displayedSessionClock = qualifyingPhaseClock
+        ? formatSessionClock(qualifyingPhaseClock.remainingMs)
+        : formatSessionClock(remainingSessionMs);
 
     const upcomingRemainingMs = isUpcoming && Number.isFinite(sessionStartMs)
         ? Math.max(0, sessionStartMs - sessionClockNow)
@@ -405,13 +416,32 @@ export const Dashboard = () => {
                     ) : (
                         <div
                             className="bg-gray-900 border border-gray-700 px-4 py-1.5 rounded-full shadow-lg flex items-center gap-3"
-                            title={isLiveSession ? 'Estimated session time remaining' : 'Scheduled session duration'}
+                            title={
+                                qualifyingPhaseClock
+                                    ? `${qualifyingPhaseClock.label} time remaining${qualifyingPhaseClock.isPaused ? ' · paused' : ''}`
+                                    : isLiveSession
+                                        ? 'Estimated session time remaining'
+                                        : 'Scheduled session duration'
+                            }
                         >
-                            <div className={`w-2 h-2 rounded-full ${isLiveSession ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
+                            <div className={`w-2 h-2 rounded-full ${
+                                qualifyingPhaseClock
+                                    ? 'bg-purple-400'
+                                    : isLiveSession
+                                        ? 'bg-green-500 animate-pulse'
+                                        : 'bg-gray-500'
+                            }`}></div>
                             <span className="font-bold uppercase tracking-widest text-xs text-gray-400">
-                                {isLiveSession ? 'Session Time' : 'Session Duration'}
+                                {qualifyingPhaseClock
+                                    ? `${qualifyingPhaseClock.label} Time`
+                                    : isLiveSession
+                                        ? 'Session Time'
+                                        : 'Session Duration'}
                             </span>
                             <span className="font-black text-white font-mono text-sm tabular-nums">{displayedSessionClock}</span>
+                            {qualifyingPhaseClock?.isPaused && (
+                                <span className="text-[9px] font-black uppercase tracking-widest text-yellow-300">Paused</span>
+                            )}
                         </div>
                     )}
                     </div>
