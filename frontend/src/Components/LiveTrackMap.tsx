@@ -251,21 +251,33 @@ export const LiveTrackMap = ({
                                 textAnchor="middle"
                                 fontSize={compact ? 9 : 11}
                                 fontWeight="900"
-                                fill="#05070b"
+                                fill="#ffffff"
+                                stroke="#0b1220"
+                                strokeWidth="2.5"
+                                paintOrder="stroke"
                             >
                                 {car.driver_number}
                             </text>
-                            {(!compact || selected) && (
-                                <text
-                                    x={point.x + radius + 6}
-                                    y={point.y + 4}
-                                    fontSize={selected ? 15 : 11}
-                                    fontWeight={selected ? 900 : 700}
-                                    fill={selected ? '#ffffff' : '#cbd5e1'}
-                                >
-                                    {car.acronym || car.name}
-                                </text>
-                            )}
+                            {(!compact || selected) && (() => {
+                                const candidate = String(car.acronym || car.name || '').trim();
+                                const outsideLabel = candidate === String(car.driver_number) ? '' : candidate;
+                                if (!outsideLabel) return null;
+
+                                return (
+                                    <text
+                                        x={point.x + radius + 6}
+                                        y={point.y + 4}
+                                        fontSize={selected ? 15 : 11}
+                                        fontWeight={selected ? 900 : 700}
+                                        fill={normalizeColor(car.team_color)}
+                                        stroke="#0b1220"
+                                        strokeWidth="3"
+                                        paintOrder="stroke"
+                                    >
+                                        {outsideLabel}
+                                    </text>
+                                );
+                            })()}
                         </g>
                     );
                 })}
@@ -284,9 +296,21 @@ export const LiveTrackMap = ({
                                     className={`w-2.5 h-2.5 shrink-0 ${getTrackerTeamVariant(car, sortedCars) % 2 === 1 ? 'rotate-45 rounded-[1px]' : 'rounded-full'}`}
                                     style={{ backgroundColor: normalizeColor(car.team_color) }}
                                 />
-                                <span className={`font-mono text-xs truncate ${selected ? 'font-black text-white' : 'font-bold text-gray-300'}`}>
-                                    P{car.position ?? '-'} · {car.name} #{car.driver_number}
-                                </span>
+                                <div className="min-w-0 flex-1">
+                                    <div className={`text-xs truncate ${selected ? 'font-black text-white' : 'font-bold text-gray-200'}`}>
+                                        {car.name} <span className="font-mono text-gray-500">#{car.driver_number}</span>
+                                    </div>
+                                    <div className="mt-0.5 flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider">
+                                        <span className={selected ? 'text-white' : 'text-blue-400'}>
+                                            P{car.position ?? '-'}
+                                        </span>
+                                        {car.team_name && (
+                                            <span className="truncate" style={{ color: normalizeColor(car.team_color) }}>
+                                                {car.team_name}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         );
                     })}
