@@ -15,6 +15,59 @@ export const setupWebSocket = async (server: any) => {
 
     const clientDriverSubs = new Map<WebSocket, Set<number>>();
     const clientUnsubscribers = new Map<WebSocket, Map<number, () => void>>();
+    const clientDelayMs = new Map<WebSocket, number>();
+    const clientDelaySessionKey = new Map<WebSocket, string | null>();
+    const clientDelayTimers = new Map<WebSocket, Set<ReturnType<typeof setTimeout>>>();
+    const clientConfiguredDelay = new Set<WebSocket>();
+
+    const clearClientDelayTimers = (client: WebSocket) => {
+        const timers = clientDelayTimers.get(client);
+        if (timers) {
+            for (const timer of timers) clearTimeout(timer);
+            timers.clear();
+        }
+    };
+
+    const sendClient = (client: WebSocket, message: any, forceImmediate = false) => {
+        if (client.readyState !== WebSocket.OPEN) return;
+
+        const messageSessionKey = message?.sessionKey != null ? String(message.sessionKey) : null;
+        const configuredSessionKey = clientDelaySessionKey.get(client) ?? null;
+
+        // Broadcast delay is session-scoped. When a new live session arrives,
+        // immediately fall back to realtime until the browser supplies that
+        // session's saved preference (if any).
+        if (messageSessionKey && configuredSessionKey && messageSessionKey !== configuredSessionKey) {
+            clearClientDelayTimers(client);
+            clientDelayMs.set(client, 0);
+            clientDelaySessionKey.set(client, messageSessionKey);
+        } else if (messageSessionKey && !configuredSessionKey) {
+            clientDelaySessionKey.set(client, messageSessionKey);
+        }
+
+        const payload = JSON.stringify(message);
+        const delay = forceImmediate ? 0 : Math.max(0, clientDelayMs.get(client) || 0);
+
+        if (delay <= 0) {
+            client.send(payload);
+            return;
+        }
+
+        const timers = clientDelayTimers.get(client) || new Set<ReturnType<typeof setTimeout>>();
+        clientDelayTimers.set(client, timers);
+        const timer = setTimeout(() => {
+            timers.delete(timer);
+            if (client.readyState === WebSocket.OPEN) client.send(payload);
+        }, delay);
+        timers.add(timer);
+    };
+
+    const sendCurrentClientState = (client: WebSocket) => {
+        sendClient(client, engine.getSnapshot());
+        for (const driver of clientDriverSubs.get(client) || []) {
+            sendClient(client, engine.getDriverSnapshot(driver, false));
+        }
+    };
 
     let provider: ITelemetryProvider | null = null;
     let providerReady = false;
@@ -22,20 +75,15 @@ export const setupWebSocket = async (server: any) => {
     let lapCountSessionKey: string | null = null;
 
     const broadcastSnapshot = () => {
-        const payload = JSON.stringify(engine.getSnapshot());
-        wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(payload);
-        });
+        const snapshot = engine.getSnapshot();
+        wss.clients.forEach(client => sendClient(client, snapshot));
     };
 
     const attachEngineBroadcast = () => {
         if (engineBroadcastBound) return;
         engineBroadcastBound = true;
         engine.subscribe(snapshot => {
-            const payload = JSON.stringify(snapshot);
-            wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) client.send(payload);
-            });
+            wss.clients.forEach(client => sendClient(client, snapshot));
         });
     };
 
@@ -44,7 +92,7 @@ export const setupWebSocket = async (server: any) => {
         if (!unsubscribers || unsubscribers.has(driver)) return;
 
         const unsubscribe = engine.subscribeDriver(driver, payload => {
-            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+            sendClient(ws, payload);
         });
         unsubscribers.set(driver, unsubscribe);
     };
@@ -52,15 +100,48 @@ export const setupWebSocket = async (server: any) => {
     wss.on('connection', ws => {
         clientDriverSubs.set(ws, new Set());
         clientUnsubscribers.set(ws, new Map());
+        clientDelayMs.set(ws, 0);
+        clientDelaySessionKey.set(ws, null);
+        clientDelayTimers.set(ws, new Set());
 
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(engine.getSnapshot()));
-        }
+        // Give the browser a brief opportunity to restore its session-specific
+        // Broadcast Sync setting before sending the initial live snapshot.
+        const initialSnapshotTimer = setTimeout(() => {
+            if (!clientConfiguredDelay.has(ws)) sendCurrentClientState(ws);
+        }, 250);
 
         ws.on('message', raw => {
             try {
                 const message = JSON.parse(raw.toString());
                 const driver = Number(message.driver);
+
+                if (message.type === 'SET_BROADCAST_DELAY') {
+                    const seconds = Math.max(0, Math.min(120, Number(message.seconds) || 0));
+                    const requestedSessionKey = message.sessionKey != null ? String(message.sessionKey) : null;
+
+                    clientConfiguredDelay.add(ws);
+                    clearTimeout(initialSnapshotTimer);
+                    clearClientDelayTimers(ws);
+                    clientDelayMs.set(ws, seconds * 1000);
+                    clientDelaySessionKey.set(
+                        ws,
+                        requestedSessionKey
+                            || clientDelaySessionKey.get(ws)
+                            || (engine.getSnapshot()?.sessionKey != null ? String(engine.getSnapshot().sessionKey) : null)
+                    );
+
+                    sendClient(ws, {
+                        type: 'BROADCAST_DELAY_APPLIED',
+                        seconds,
+                        sessionKey: clientDelaySessionKey.get(ws)
+                    }, true);
+
+                    // With no delay this catches the UI up immediately. When a
+                    // delay is enabled, this snapshot/driver state becomes the
+                    // first item on the delayed presentation timeline.
+                    sendCurrentClientState(ws);
+                    return;
+                }
 
                 if ((message.type === 'SUBSCRIBE_DRIVER' || message.type === 'SUBSCRIBE_TELEMETRY') && Number.isFinite(driver)) {
                     const subs = clientDriverSubs.get(ws)!;
@@ -90,6 +171,11 @@ export const setupWebSocket = async (server: any) => {
             const unsubscribers = clientUnsubscribers.get(ws);
             clientDriverSubs.delete(ws);
             clientUnsubscribers.delete(ws);
+            clientConfiguredDelay.delete(ws);
+            clearClientDelayTimers(ws);
+            clientDelayTimers.delete(ws);
+            clientDelayMs.delete(ws);
+            clientDelaySessionKey.delete(ws);
 
             for (const driver of subs || []) {
                 unsubscribers?.get(driver)?.();
@@ -188,11 +274,11 @@ export const setupWebSocket = async (server: any) => {
             if (CONFIG.LIVE_PROVIDER !== 'OPENF1_PAID') {
                 for (const [ws, subs] of clientDriverSubs) {
                     if (ws.readyState === WebSocket.OPEN && subs.has(driverNumber)) {
-                        ws.send(JSON.stringify({
+                        sendClient(ws, {
                             type: 'LIVE_TELEMETRY_POINT',
                             driver: driverNumber,
                             data: point
-                        }));
+                        });
                     }
                 }
             }
