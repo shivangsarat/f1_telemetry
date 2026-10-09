@@ -59,6 +59,7 @@ export class LiveSessionEngine {
     private trackTrace: any[] = [];
     private championshipContext: any = null;
     private trackMeta: any = null;
+    private availableSessions: any[] = [];
     private scheduledTotalLaps: number | null = null;
     private readonly maps = new Map<string, Map<string, any>>();
 
@@ -76,6 +77,31 @@ export class LiveSessionEngine {
         this.state.raceControl = calculated.raceControl || this.state.raceControl;
         this.state.championshipDrivers = calculated.championshipDrivers || this.state.championshipDrivers;
         this.state.championshipTeams = calculated.championshipTeams || this.state.championshipTeams;
+        this.availableSessions = calculated.availableSessions || this.availableSessions;
+
+        // A newly-started live session can begin emitting laps/weather before the
+        // MQTT drivers topic is replayed. Seed the live engine with driver metadata
+        // from the REST-calculated results so those incoming lap rows immediately
+        // produce a classification instead of collapsing to an empty table.
+        if (Array.isArray(calculated.results) && calculated.results.length > 0) {
+            const driverMap = this.maps.get('drivers')!;
+            for (const result of calculated.results) {
+                const driverNumber = Number(result.driver_number);
+                if (!Number.isFinite(driverNumber) || driverNumber <= 0) continue;
+
+                const driverInfo = {
+                    driver_number: driverNumber,
+                    full_name: result.name,
+                    name_acronym: result.name_acronym,
+                    team_name: result.team_name,
+                    team_colour: result.team_color || result.team_colour
+                };
+
+                driverMap.set(keyFor('drivers', driverInfo), driverInfo);
+            }
+            this.syncCollection('drivers');
+        }
+
         this.championshipContext = calculated.championshipMeta || this.championshipContext;
         const hydratedScheduledLaps = Number(calculated.scheduledTotalLaps);
         if (Number.isFinite(hydratedScheduledLaps) && hydratedScheduledLaps > 0) {
@@ -228,6 +254,7 @@ export class LiveSessionEngine {
         this.trackTrace = [];
         this.championshipContext = null;
         this.trackMeta = null;
+        this.availableSessions = [];
         this.scheduledTotalLaps = null;
         this.bootstrapSnapshot = null;
     }
@@ -403,7 +430,7 @@ export class LiveSessionEngine {
     }
 
     getSnapshot() {
-        const hasStreamState = this.state.drivers.length > 0 || this.state.laps.length > 0 || this.state.positions.length > 0;
+        const hasStreamState = this.state.drivers.length > 0;
         if (!hasStreamState && this.bootstrapSnapshot) {
             return {
                 type: 'LIVE_RACE_STATE',
@@ -433,6 +460,7 @@ export class LiveSessionEngine {
             sessionResults: this.state.sessionResults,
             remainingChampionshipPoints: this.championshipContext?.remainingChampionshipPoints,
             scheduledTotalLaps: this.scheduledTotalLaps,
+            availableSessions: this.availableSessions,
             sessionFinished: this.state.raceControl.some(message => String(message.flag || '').toUpperCase() === 'CHEQUERED')
         });
 
