@@ -65,6 +65,7 @@ export const DriverProfile = () => {
     ));
     const [raceDetails, setRaceDetails] = useState<any>(() => cachedRaceDetails || null);
     const [loading, setLoading] = useState(false);
+    const [sessionClockNow, setSessionClockNow] = useState(() => Date.now());
 
     const [isAutoScroll, setIsAutoScroll] = useState(true);
     const [manualMin, setManualMin] = useState(0);
@@ -275,6 +276,46 @@ export const DriverProfile = () => {
     const activeSessionName = activeSessionInfo?.session_name || activeSessionInfo?.session_type || '';
 
     const currentDriverInfo = activeResults.find((d: any) => Number(d.driver_number) === driverNumber);
+
+    const scheduledTotalLaps = Number(
+        isLive ? liveRace?.scheduledTotalLaps : raceDetails?.scheduledTotalLaps
+    ) || 0;
+    const lapsCompleted = Number(
+        currentDriverInfo?.completed_laps
+        ?? currentDriverInfo?.driver_laps
+        ?? 0
+    );
+
+    const sessionStartMs = activeSessionInfo?.date_start
+        ? new Date(activeSessionInfo.date_start).getTime()
+        : NaN;
+    const sessionEndMs = activeSessionInfo?.date_end
+        ? new Date(activeSessionInfo.date_end).getTime()
+        : NaN;
+
+    const sessionRemainingMs = isLive && !isRaceMode && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionClockNow)
+        : 0;
+
+    const sessionDurationMs = !isLive && !isRaceMode
+        && Number.isFinite(sessionStartMs)
+        && Number.isFinite(sessionEndMs)
+        ? Math.max(0, sessionEndMs - sessionStartMs)
+        : 0;
+
+    const formatSessionClock = (ms: number) => {
+        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return hours > 0
+            ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+            : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    };
+
+    const displayedSessionTime = formatSessionClock(
+        isLive ? sessionRemainingMs : sessionDurationMs
+    );
     const deletedLapByNumber = new Map<number, any>(
         (currentDriverInfo?.lapsHistory || [])
             .filter((lap: any) => lap?.is_deleted)
@@ -335,6 +376,13 @@ export const DriverProfile = () => {
         return Number.isFinite(n) && Number.isFinite(best) && Math.abs(n - best) < 0.0005;
     };
 
+    useEffect(() => {
+        if (!isLive || isRaceMode) return;
+        setSessionClockNow(Date.now());
+        const timer = window.setInterval(() => setSessionClockNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [isLive, isRaceMode, activeSessionInfo?.session_key, activeSessionInfo?.date_end]);
+
     const isLiveTracking = isAutoScroll && isLive;
 
     return (
@@ -369,12 +417,56 @@ export const DriverProfile = () => {
                     </div>
                 </div>
 
-                <Link
-                    to={`/race/${sessionKey}`}
-                    className="text-gray-400 hover:text-white uppercase font-bold text-sm shrink-0"
-                >
-                    ← Back to Results
-                </Link>
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                    {isRaceMode ? (
+                        <>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title="Driver completed laps"
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Completed</span>
+                                <span className="font-mono text-sm font-black text-white">{lapsCompleted}</span>
+                            </div>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title="Scheduled race distance"
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Total Laps</span>
+                                <span className="font-mono text-sm font-black text-white">
+                                    {scheduledTotalLaps > 0 ? scheduledTotalLaps : '-'}
+                                </span>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title={isLive ? 'Session time remaining' : 'Scheduled session duration'}
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
+                                    {isLive ? 'Session Time' : 'Duration'}
+                                </span>
+                                <span className="font-mono text-sm font-black text-white tabular-nums">
+                                    {displayedSessionTime}
+                                </span>
+                            </div>
+                            <div
+                                className="rounded-full border border-gray-700 bg-gray-900 px-4 py-2 flex items-center gap-2"
+                                title="Driver completed laps"
+                            >
+                                <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Laps Completed</span>
+                                <span className="font-mono text-sm font-black text-white">{lapsCompleted}</span>
+                            </div>
+                        </>
+                    )}
+
+                    <Link
+                        to={`/race/${sessionKey}`}
+                        className="text-gray-400 hover:text-white uppercase font-bold text-sm shrink-0"
+                    >
+                        ← Back to Results
+                    </Link>
+                </div>
             </div>
             
             <div className={`flex flex-col gap-6 relative ${isLiveTracking ? 'live-playhead' : 'hist-playhead'}`}>
