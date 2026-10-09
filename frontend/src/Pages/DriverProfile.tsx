@@ -92,6 +92,7 @@ export const DriverProfile = () => {
 
     const processedData = (isLive ? liveData : histPayload).telemetry;
     const processedDataRef = useRef(processedData);
+    const chartFrameRef = useRef<number | null>(null);
     useEffect(() => { processedDataRef.current = processedData; }, [processedData]);
 
     const [legendValues, setLegendValues] = useState({ lapX: '--', speed: '--', rpm: '--', throttle: '--', brake: '--', gear: '--', drs: '--' });
@@ -215,46 +216,73 @@ export const DriverProfile = () => {
     useEffect(() => {
         if (processedData.length === 0) return;
 
-        const plausibleMaxLap = Math.max(
-            10,
-            Number(liveRace?.maxRaceLap || raceDetails?.maxRaceLap || 0) + 5,
-            Number(currentDriverInfo?.completed_laps || currentDriverInfo?.driver_laps || 0) + 5
-        );
+        if (chartFrameRef.current !== null) {
+            cancelAnimationFrame(chartFrameRef.current);
+        }
 
-        const validData = processedData
-            .filter((point: any) => {
-                const lapX = Number(point?.lapX);
-                return Number.isFinite(lapX)
-                    && lapX >= 0
-                    && lapX <= Math.min(250, plausibleMaxLap);
-            })
-            .sort((a: any, b: any) => Number(a.lapX) - Number(b.lapX));
+        chartFrameRef.current = requestAnimationFrame(() => {
+            chartFrameRef.current = null;
 
-        if (validData.length === 0) return;
+            const plausibleMaxLap = Math.max(
+                10,
+                Number(liveRace?.maxRaceLap || raceDetails?.maxRaceLap || 0) + 5,
+                Number(currentDriverInfo?.completed_laps || currentDriverInfo?.driver_laps || 0) + 5
+            );
 
-        const xLaps = validData.map((d: any) => Number(d.lapX));
-        const latestX = xLaps[xLaps.length - 1];
-        setMaxLapX(latestX);
+            const validData = processedData
+                .filter((point: any) => {
+                    const lapX = Number(point?.lapX);
+                    return Number.isFinite(lapX)
+                        && lapX >= 0
+                        && lapX <= Math.min(250, plausibleMaxLap);
+                })
+                .sort((a: any, b: any) => Number(a.lapX) - Number(b.lapX));
 
-        // Keep the original rolling telemetry-plot behaviour: the dataset grows
-        // with the session and the separate viewport effect follows the latest
-        // three laps. Do not turn the graph into a separate time-axis timeline.
-        plotInstance1.current?.setData([
-            xLaps,
-            validData.map((d: any) => Number(d.speed) || 0),
-            validData.map((d: any) => Number(d.rpm) || 0)
-        ]);
-        plotInstance2.current?.setData([
-            xLaps,
-            validData.map((d: any) => Number(d.throttle) || 0),
-            validData.map((d: any) => Number(d.brake) || 0),
-            validData.map((d: any) => Number(d.gear) || 0)
-        ]);
+            if (validData.length === 0) return;
 
-        const latest = validData[validData.length - 1];
-        if (isAutoScroll && latest) updateLegendState(latest);
+            const latestLapX = Number(validData[validData.length - 1]?.lapX);
+            const chartMinLap = isLive
+                ? Math.max(0, latestLapX - 6)
+                : 0;
+
+            // The live charts only display a small rolling lap viewport. Keep a
+            // few extra laps for manual scrolling, rather than redrawing the
+            // entire session's raw car_data on every telemetry sample.
+            const chartData = isLive
+                ? validData.filter((point: any) => Number(point.lapX) >= chartMinLap)
+                : validData;
+
+            const xLaps = chartData.map((d: any) => Number(d.lapX));
+            if (xLaps.length === 0) return;
+
+            const latestX = xLaps[xLaps.length - 1];
+            setMaxLapX(latestX);
+
+            plotInstance1.current?.setData([
+                xLaps,
+                chartData.map((d: any) => Number(d.speed) || 0),
+                chartData.map((d: any) => Number(d.rpm) || 0)
+            ]);
+            plotInstance2.current?.setData([
+                xLaps,
+                chartData.map((d: any) => Number(d.throttle) || 0),
+                chartData.map((d: any) => Number(d.brake) || 0),
+                chartData.map((d: any) => Number(d.gear) || 0)
+            ]);
+
+            const latest = chartData[chartData.length - 1];
+            if (isAutoScroll && latest) updateLegendState(latest);
+        });
+
+        return () => {
+            if (chartFrameRef.current !== null) {
+                cancelAnimationFrame(chartFrameRef.current);
+                chartFrameRef.current = null;
+            }
+        };
     }, [
         processedData,
+        isLive,
         isAutoScroll,
         updateLegendState,
         liveRace?.maxRaceLap,
