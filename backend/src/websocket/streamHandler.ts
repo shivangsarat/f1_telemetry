@@ -4,7 +4,7 @@ import { ITelemetryProvider } from '../providers/ITelemetryProvider';
 import { FreeFastF1Provider } from '../providers/FreeFastF1Provider';
 import { OpenF1PaidProvider } from '../providers/OpenF1PaidProvider';
 import { LiveSessionEngine } from '../services/liveSessionEngine';
-import { getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
+import { getCurrentLiveSession, getRaceDetails, getScheduledTotalLaps } from '../services/dataService';
 
 export const setupWebSocket = async (server: any) => {
     // Attach WebSocket handling immediately. Provider/bootstrap initialization may
@@ -110,17 +110,44 @@ export const setupWebSocket = async (server: any) => {
         provider = new FreeFastF1Provider(CONFIG.FASTF1_WS_URL);
     }
 
-    // Live pages remain browser-WebSocket-only. The backend hydrates once from
-    // REST, then sends the resulting state to all connected clients.
-    if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
+    // Live pages remain browser-WebSocket-only. Resolve the session that is
+    // actually active by wall-clock time; OpenF1's "latest" can still refer to
+    // the previous completed session until new session data has propagated.
+    let hydratedSessionKey: string | null = null;
+
+    const hydrateCurrentSession = async (allowLatestFallback = false) => {
         try {
-            const initial = await getRaceDetails('latest');
-            engine.hydrate(initial, initial.active_session_key ?? initial.sessionInfo?.session_key);
-            console.log('🏁 [Live Engine] Initial live state hydrated from REST.');
-            broadcastSnapshot();
+            const currentSession = await getCurrentLiveSession();
+            const sessionKey = currentSession?.session_key != null
+                ? String(currentSession.session_key)
+                : null;
+
+            if (sessionKey && sessionKey !== hydratedSessionKey) {
+                const current = await getRaceDetails(sessionKey, true);
+                engine.hydrate(current, sessionKey);
+                hydratedSessionKey = sessionKey;
+                console.log(`🏁 [Live Engine] Hydrated active session ${sessionKey} (${currentSession.session_name || currentSession.session_type || 'session'}).`);
+                broadcastSnapshot();
+                return;
+            }
+
+            if (!sessionKey && allowLatestFallback && !hydratedSessionKey) {
+                const latest = await getRaceDetails('latest', true);
+                const latestKey = latest.active_session_key ?? latest.sessionInfo?.session_key;
+                if (latestKey != null) {
+                    hydratedSessionKey = String(latestKey);
+                    engine.hydrate(latest, latestKey);
+                    console.log('🏁 [Live Engine] No active wall-clock session; hydrated latest session as fallback.');
+                    broadcastSnapshot();
+                }
+            }
         } catch (error: any) {
-            console.warn('⚠️ [Live Engine] REST hydration failed; continuing stream-only:', error?.message || error);
+            console.warn('⚠️ [Live Engine] REST live-session hydration failed; continuing stream-only:', error?.message || error);
         }
+    };
+
+    if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
+        await hydrateCurrentSession(true);
     }
 
     attachEngineBroadcast();
@@ -134,6 +161,16 @@ export const setupWebSocket = async (server: any) => {
                 const latestSession = rows[rows.length - 1];
                 const sessionKey = latestSession?.session_key != null ? String(latestSession.session_key) : null;
                 const sessionType = String(latestSession?.session_type || latestSession?.session_name || '').toLowerCase();
+
+                if (sessionKey && sessionKey !== hydratedSessionKey) {
+                    void getRaceDetails(sessionKey, true)
+                        .then(current => {
+                            engine.hydrate(current, sessionKey);
+                            hydratedSessionKey = sessionKey;
+                            broadcastSnapshot();
+                        })
+                        .catch(error => console.warn('⚠️ Unable to hydrate newly announced live session:', error?.message || error));
+                }
 
                 if (
                     sessionKey
@@ -175,4 +212,14 @@ export const setupWebSocket = async (server: any) => {
 
     broadcastSnapshot();
     console.log(`🏎️ [Live Engine] Backend WebSocket state stream ready using ${provider.name}`);
+
+    // MQTT only pushes future events; if the backend was already running before
+    // a session started, there is no guarantee that a fresh sessions message is
+    // replayed. Re-resolve the active session periodically so /live rolls over
+    // automatically without a backend/browser restart.
+    if (CONFIG.LIVE_PROVIDER === 'OPENF1_PAID') {
+        setInterval(() => {
+            void hydrateCurrentSession(false);
+        }, 30000);
+    }
 };
