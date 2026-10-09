@@ -202,6 +202,43 @@ export class LiveSessionEngine {
                 continue;
             }
 
+            if (topic === 'intervals') {
+                const map = this.maps.get(topic)!;
+                const key = keyFor(topic, row);
+                const previous = map.get(key) || {};
+
+                const hasFiniteInterval =
+                    row.interval !== null
+                    && row.interval !== undefined
+                    && row.interval !== ''
+                    && Number.isFinite(Number(row.interval));
+                const incomingGap = row.gap_to_leader ?? row.gap;
+                const hasFiniteGap =
+                    incomingGap !== null
+                    && incomingGap !== undefined
+                    && incomingGap !== ''
+                    && Number.isFinite(Number(incomingGap));
+
+                const merged = {
+                    ...previous,
+                    ...row,
+                    interval: hasFiniteInterval ? row.interval : previous.interval,
+                    gap_to_leader: hasFiniteGap
+                        ? incomingGap
+                        : (previous.gap_to_leader ?? previous.gap),
+                    _interval_authoritative_date: hasFiniteInterval
+                        ? row.date
+                        : previous._interval_authoritative_date,
+                    _gap_authoritative_date: hasFiniteGap
+                        ? row.date
+                        : previous._gap_authoritative_date
+                };
+
+                map.set(key, merged);
+                this.syncCollection(topic);
+                continue;
+            }
+
             if (topic === 'pit') {
                 const map = this.maps.get(topic)!;
                 map.set(keyFor(topic, row), row);
