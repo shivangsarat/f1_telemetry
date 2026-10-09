@@ -835,6 +835,28 @@ export class LiveSessionEngine {
         return this.carDataIngestedAt.get(driverNumber) || 0;
     }
 
+    getDriverTelemetryReplay(driverNumber: number, fromMs: number, toMs: number) {
+        const carData = this.carData.get(driverNumber) || [];
+        const locations = this.locationHistory.get(driverNumber) || [];
+        if (carData.length === 0) return [];
+
+        const paddedFrom = Math.max(0, fromMs - 5000);
+        const boundedCarData = carData.filter((row: any) => {
+            const time = row?.date ? new Date(row.date).getTime() : NaN;
+            return Number.isFinite(time) && time >= paddedFrom && time <= toMs;
+        });
+        const boundedLocations = locations.filter((row: any) => {
+            const time = row?.date ? new Date(row.date).getTime() : NaN;
+            return Number.isFinite(time) && time >= paddedFrom && time <= toMs;
+        });
+
+        const telemetry = buildTelemetryHistory(boundedCarData, this.state.laps, boundedLocations);
+        return telemetry.filter((point: any) => {
+            const time = point?.date ? new Date(point.date).getTime() : NaN;
+            return Number.isFinite(time) && time > fromMs && time <= toMs;
+        });
+    }
+
     getTrackerSnapshotAt(cutoffMs?: number) {
         const race = this.getSnapshot().data;
         return this.getTrackerSnapshot(race.results || [], cutoffMs);
