@@ -228,6 +228,15 @@ export const Dashboard = () => {
                 return (
                     <div className="flex items-center gap-2">
                         <div className="w-1 h-4 rounded" style={{ backgroundColor: `#${row.team_color}` }}></div>
+                        {row.checkered && (
+                            <span
+                                className="text-[11px] leading-none"
+                                title="Driver has taken the checkered flag"
+                                aria-label="Checkered flag"
+                            >
+                                🏁
+                            </span>
+                        )}
                         <Link to={`/race/${sessionKey}/driver/${row.driver_number}`} onClick={(e) => e.stopPropagation()} className={`font-bold hover:underline ${isRetired ? 'text-gray-500' : 'text-blue-400'}`}>
                             {row.name} ({row.driver_number})
                         </Link>
