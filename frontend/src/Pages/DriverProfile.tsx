@@ -218,41 +218,24 @@ export const DriverProfile = () => {
         const latestX = xLaps[xLaps.length - 1];
         setMaxLapX(latestX);
 
-        // setData() resets uPlot scales by default. During a live stream that was
-        // repeatedly snapping x back to its initial 0..3 viewport, leaving all
-        // telemetry points off-screen. Preserve scales and explicitly update the
-        // live viewport after every data append.
+        // Keep the original rolling telemetry-plot behaviour: the dataset grows
+        // with the session and the separate viewport effect follows the latest
+        // three laps. Do not turn the graph into a separate time-axis timeline.
         plotInstance1.current?.setData([
             xLaps,
             validData.map((d: any) => Number(d.speed) || 0),
             validData.map((d: any) => Number(d.rpm) || 0)
-        ], false);
+        ]);
         plotInstance2.current?.setData([
             xLaps,
             validData.map((d: any) => Number(d.throttle) || 0),
             validData.map((d: any) => Number(d.brake) || 0),
             validData.map((d: any) => Number(d.gear) || 0)
-        ], false);
-
-        let min = 0;
-        let max = VIEWPORT_LAPS;
-        if (latestX > VIEWPORT_LAPS) {
-            if (isAutoScroll) {
-                const targetOffset = VIEWPORT_LAPS * 0.75;
-                max = latestX + (VIEWPORT_LAPS - targetOffset);
-                min = max - VIEWPORT_LAPS;
-            } else {
-                min = manualMin;
-                max = manualMin + VIEWPORT_LAPS;
-            }
-        }
-
-        plotInstance1.current?.setScale('x', { min, max });
-        plotInstance2.current?.setScale('x', { min, max });
+        ]);
 
         const latest = validData[validData.length - 1];
         if (isAutoScroll && latest) updateLegendState(latest);
-    }, [processedData, isAutoScroll, manualMin, updateLegendState]);
+    }, [processedData, isAutoScroll, updateLegendState]);
 
     useEffect(() => {
         let min = 0;
@@ -566,24 +549,24 @@ export const DriverProfile = () => {
 
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 relative" onMouseLeave={snapToPlayhead}>
                     <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4 flex justify-between">
-                        <span>Timeline: Speed & Engine RPM</span>
+                        <span>Speed & Engine RPM</span>
                         {isLiveTracking && <span className="text-green-500 animate-pulse font-bold tracking-widest">● LIVE SYNC</span>}
                     </h2>
                     <div ref={chartRef1} className="w-full min-h-[300px]"></div>
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
-                        Timeline Pos: <span ref={lapXRef1} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        Lap Position: <span ref={lapXRef1} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#00ff00]">■</span> Speed: <span ref={speedRef} className="text-white font-bold">{legendValues.speed}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ff00ff]">■</span> RPM: <span ref={rpmRef} className="text-white font-bold">{legendValues.rpm}</span>
                     </div>
                 </div>
                 
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800" onMouseLeave={snapToPlayhead}>
-                    <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Timeline: Driver Inputs & Gear</h2>
+                    <h2 className="text-sm text-gray-400 uppercase tracking-wider mb-4">Driver Inputs & Gear</h2>
                     <div ref={chartRef2} className="w-full min-h-[250px]"></div>
                     
                     <div className="text-center text-xs font-mono text-gray-400 mt-2">
-                        Timeline Pos: <span ref={lapXRef2} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                        Lap Position: <span ref={lapXRef2} className="text-white font-bold">{legendValues.lapX}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#00aaff]">■</span> Throttle: <span ref={throttleRef} className="text-white font-bold">{legendValues.throttle}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ff3333]">■</span> Brake: <span ref={brakeRef} className="text-white font-bold">{legendValues.brake}</span> &nbsp;&nbsp;&nbsp;&nbsp;
                         <span className="text-[#ffaa00]">■</span> Gear: <span ref={gearRef} className="text-white font-bold">{legendValues.gear}</span>
@@ -593,7 +576,7 @@ export const DriverProfile = () => {
                 <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 flex flex-col gap-6">
                     {hasEnoughDataToScroll ? (
                         <div className="flex items-center gap-4">
-                            <span className="text-xs text-gray-500 uppercase font-bold w-20">Timeline</span>
+                            <span className="text-xs text-gray-500 uppercase font-bold w-20">Lap Window</span>
                             <input 
                                 type="range" min={0} max={maxAllowedScroll} step={0.01} value={currentSliderVal}
                                 onChange={(e) => {
