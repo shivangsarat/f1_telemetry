@@ -61,6 +61,14 @@ export class LiveSessionEngine {
     private trackMeta: any = null;
     private availableSessions: any[] = [];
     private scheduledTotalLaps: number | null = null;
+    private readonly timingMemory = new Map<number, {
+        bestLapRaw: number;
+        bestLap: string;
+        bestSectors: any;
+        lastLapNumber: number;
+        lastLap: string;
+        lastSectors: any;
+    }>();
     private readonly maps = new Map<string, Map<string, any>>();
 
     hydrate(calculated: any, sessionKey?: string | number | null) {
@@ -86,6 +94,10 @@ export class LiveSessionEngine {
         if (Array.isArray(calculated.results) && calculated.results.length > 0) {
             const driverMap = this.maps.get('drivers')!;
             for (const result of calculated.results) {
+                const bootstrapDriverNumber = Number(result.driver_number);
+                if (Number.isFinite(bootstrapDriverNumber) && bootstrapDriverNumber > 0) {
+                    this.rememberDriverTiming(result);
+                }
                 const driverNumber = Number(result.driver_number);
                 if (!Number.isFinite(driverNumber) || driverNumber <= 0) continue;
 
@@ -256,6 +268,7 @@ export class LiveSessionEngine {
         this.trackMeta = null;
         this.availableSessions = [];
         this.scheduledTotalLaps = null;
+        this.timingMemory.clear();
         this.bootstrapSnapshot = null;
     }
 
@@ -423,6 +436,63 @@ export class LiveSessionEngine {
         }, 250);
     }
 
+    private rememberDriverTiming(result: any) {
+        const driverNumber = Number(result?.driver_number);
+        if (!Number.isFinite(driverNumber) || driverNumber <= 0) return result;
+
+        const previous = this.timingMemory.get(driverNumber);
+        const incomingBestRaw = Number(result?.best_lap_raw);
+        const previousBestRaw = Number(previous?.bestLapRaw);
+
+        const hasIncomingBest = Number.isFinite(incomingBestRaw) && incomingBestRaw > 0;
+        const shouldUpdateBest = hasIncomingBest
+            && (!Number.isFinite(previousBestRaw) || incomingBestRaw < previousBestRaw);
+
+        const incomingLastNumber = Number(result?.last_completed_lap_number || result?.completed_laps || 0);
+        const previousLastNumber = Number(previous?.lastLapNumber || 0);
+        const hasIncomingLast = incomingLastNumber > 0 && result?.last_lap && result.last_lap !== '-';
+        const shouldUpdateLast = hasIncomingLast && incomingLastNumber >= previousLastNumber;
+
+        const nextMemory = {
+            bestLapRaw: shouldUpdateBest
+                ? incomingBestRaw
+                : (Number.isFinite(previousBestRaw) ? previousBestRaw : incomingBestRaw),
+            bestLap: shouldUpdateBest
+                ? result.best_lap
+                : (previous?.bestLap || result.best_lap || '-'),
+            bestSectors: shouldUpdateBest
+                ? result.best_sectors
+                : (previous?.bestSectors || result.best_sectors || null),
+            lastLapNumber: shouldUpdateLast ? incomingLastNumber : previousLastNumber,
+            lastLap: shouldUpdateLast
+                ? result.last_lap
+                : (previous?.lastLap || result.last_lap || '-'),
+            lastSectors: shouldUpdateLast
+                ? result.last_sectors
+                : (previous?.lastSectors || result.last_sectors || null)
+        };
+
+        this.timingMemory.set(driverNumber, nextMemory);
+
+        return {
+            ...result,
+            best_lap_raw: Number.isFinite(nextMemory.bestLapRaw) ? nextMemory.bestLapRaw : result.best_lap_raw,
+            best_lap: nextMemory.bestLap || result.best_lap,
+            best_sectors: nextMemory.bestSectors || result.best_sectors,
+            last_completed_lap_number: Math.max(incomingLastNumber, nextMemory.lastLapNumber || 0),
+            last_lap: nextMemory.lastLap || result.last_lap,
+            last_sectors: nextMemory.lastSectors || result.last_sectors
+        };
+    }
+
+    private applyTimingMemory(calculated: any) {
+        if (!Array.isArray(calculated?.results)) return calculated;
+        return {
+            ...calculated,
+            results: calculated.results.map((result: any) => this.rememberDriverTiming(result))
+        };
+    }
+
     private scheduleEmit() {
         if (this.scheduled) return;
         this.scheduled = true;
@@ -451,7 +521,7 @@ export class LiveSessionEngine {
             };
         }
 
-        const calculated = calculateRaceView({
+        const calculatedRaw = calculateRaceView({
             sessionInfo: this.state.sessionInfo,
             meetingInfo: this.trackMeta?.meetingInfo,
             circuitInfo: this.trackMeta?.circuitInfo,
@@ -471,6 +541,7 @@ export class LiveSessionEngine {
             availableSessions: this.availableSessions,
             sessionFinished: this.state.raceControl.some(message => String(message.flag || '').toUpperCase() === 'CHEQUERED')
         });
+        const calculated = this.applyTimingMemory(calculatedRaw);
 
         return {
             type: 'LIVE_RACE_STATE',
