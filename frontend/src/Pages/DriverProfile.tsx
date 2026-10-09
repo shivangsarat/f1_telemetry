@@ -206,15 +206,53 @@ export const DriverProfile = () => {
     }, [isAutoScroll, maxLapX, manualMin, updateLegendState]);
 
     useEffect(() => {
-        if (processedData.length > 0) {
-            const xLaps = processedData.map((d: any) => d.lapX);
-            const latestX = xLaps[xLaps.length - 1];
-            setMaxLapX(latestX); 
-            
-            plotInstance1.current?.setData([xLaps, processedData.map((d: any) => d.speed), processedData.map((d: any) => d.rpm)]);
-            plotInstance2.current?.setData([xLaps, processedData.map((d: any) => d.throttle), processedData.map((d: any) => d.brake), processedData.map((d: any) => d.gear)]);
+        if (processedData.length === 0) return;
+
+        const validData = processedData
+            .filter((point: any) => Number.isFinite(Number(point?.lapX)))
+            .sort((a: any, b: any) => Number(a.lapX) - Number(b.lapX));
+
+        if (validData.length === 0) return;
+
+        const xLaps = validData.map((d: any) => Number(d.lapX));
+        const latestX = xLaps[xLaps.length - 1];
+        setMaxLapX(latestX);
+
+        // setData() resets uPlot scales by default. During a live stream that was
+        // repeatedly snapping x back to its initial 0..3 viewport, leaving all
+        // telemetry points off-screen. Preserve scales and explicitly update the
+        // live viewport after every data append.
+        plotInstance1.current?.setData([
+            xLaps,
+            validData.map((d: any) => Number(d.speed) || 0),
+            validData.map((d: any) => Number(d.rpm) || 0)
+        ], false);
+        plotInstance2.current?.setData([
+            xLaps,
+            validData.map((d: any) => Number(d.throttle) || 0),
+            validData.map((d: any) => Number(d.brake) || 0),
+            validData.map((d: any) => Number(d.gear) || 0)
+        ], false);
+
+        let min = 0;
+        let max = VIEWPORT_LAPS;
+        if (latestX > VIEWPORT_LAPS) {
+            if (isAutoScroll) {
+                const targetOffset = VIEWPORT_LAPS * 0.75;
+                max = latestX + (VIEWPORT_LAPS - targetOffset);
+                min = max - VIEWPORT_LAPS;
+            } else {
+                min = manualMin;
+                max = manualMin + VIEWPORT_LAPS;
+            }
         }
-    }, [processedData]);
+
+        plotInstance1.current?.setScale('x', { min, max });
+        plotInstance2.current?.setScale('x', { min, max });
+
+        const latest = validData[validData.length - 1];
+        if (isAutoScroll && latest) updateLegendState(latest);
+    }, [processedData, isAutoScroll, manualMin, updateLegendState]);
 
     useEffect(() => {
         let min = 0;
