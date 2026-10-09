@@ -36,6 +36,7 @@ type DriverLiveData = {
 interface RaceState {
     connected: boolean;
     liveSessionKey: string | null;
+    broadcastDelaySeconds: number;
     liveRace: LiveRaceData | null;
     driverLive: Record<number, DriverLiveData>;
 
@@ -56,6 +57,7 @@ interface RaceState {
     connect: () => void;
     subscribeToDriver: (driverNumber: number) => void;
     unsubscribeFromDriver: (driverNumber: number) => void;
+    setBroadcastDelaySeconds: (seconds: number) => void;
 
     cacheHistoricalRace: (sessionKey: string, data: any) => void;
     cacheHistoricalDriver: (sessionKey: string, driverNumber: number, data: DriverLiveData) => void;
@@ -95,6 +97,7 @@ const wsUrl = import.meta.env.PROD ? `wss://${window.location.host}` : 'ws://loc
 export const useRaceStore = create<RaceState>((set) => ({
     connected: false,
     liveSessionKey: null,
+    broadcastDelaySeconds: 0,
     liveRace: null,
     driverLive: {},
     historicalRaces: {},
@@ -111,6 +114,14 @@ export const useRaceStore = create<RaceState>((set) => ({
 
         ws.onopen = () => {
             set({ connected: true });
+
+            const state = useRaceStore.getState();
+            ws?.send(JSON.stringify({
+                type: 'SET_BROADCAST_DELAY',
+                seconds: state.broadcastDelaySeconds,
+                sessionKey: state.liveSessionKey
+            }));
+
             driverSubscriptions.forEach(driver => {
                 ws?.send(JSON.stringify({ type: 'SUBSCRIBE_DRIVER', driver }));
             });
@@ -122,15 +133,33 @@ export const useRaceStore = create<RaceState>((set) => ({
 
                 if (msg.type === 'LIVE_RACE_STATE' && msg.data) {
                     const incomingSessionKey = msg.sessionKey != null ? String(msg.sessionKey) : null;
-                    const previousSessionKey = useRaceStore.getState().liveSessionKey;
+                    const previousState = useRaceStore.getState();
+                    const previousSessionKey = previousState.liveSessionKey;
                     const sessionChanged = Boolean(
                         incomingSessionKey
                         && previousSessionKey
                         && incomingSessionKey !== previousSessionKey
                     );
 
+                    let nextBroadcastDelay = previousState.broadcastDelaySeconds;
+                    if (incomingSessionKey && incomingSessionKey !== previousSessionKey) {
+                        const saved = window.localStorage.getItem(`broadcast-sync:${incomingSessionKey}`);
+                        nextBroadcastDelay = saved == null
+                            ? 0
+                            : Math.max(0, Math.min(120, Number(saved) || 0));
+
+                        if (ws?.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'SET_BROADCAST_DELAY',
+                                seconds: nextBroadcastDelay,
+                                sessionKey: incomingSessionKey
+                            }));
+                        }
+                    }
+
                     set({
                         liveSessionKey: incomingSessionKey || previousSessionKey,
+                        broadcastDelaySeconds: nextBroadcastDelay,
                         ...(sessionChanged ? { driverLive: {} } : {}),
                         liveRace: {
                             results: msg.data.results || [],
@@ -227,6 +256,25 @@ export const useRaceStore = create<RaceState>((set) => ({
         driverSubscriptions.delete(driverNumber);
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'UNSUBSCRIBE_DRIVER', driver: driverNumber }));
+        }
+    },
+
+    setBroadcastDelaySeconds: (seconds: number) => {
+        const clamped = Math.max(0, Math.min(120, Math.round(Number(seconds) || 0)));
+        const sessionKey = useRaceStore.getState().liveSessionKey;
+
+        set({ broadcastDelaySeconds: clamped });
+
+        if (sessionKey) {
+            window.localStorage.setItem(`broadcast-sync:${sessionKey}`, String(clamped));
+        }
+
+        if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'SET_BROADCAST_DELAY',
+                seconds: clamped,
+                sessionKey
+            }));
         }
     },
 
