@@ -232,6 +232,11 @@ export const Dashboard = () => {
                             {row.name} ({row.driver_number})
                         </Link>
                         <DriverBadges driver={row} compact />
+                        {row.in_pit && (
+                            <span className="bg-yellow-500/10 text-yellow-300 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-widest border border-yellow-500/40 shadow-sm">
+                                PIT
+                            </span>
+                        )}
                         {isRetired && <span className="bg-red-900/30 text-red-500 text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-widest border border-red-800/50 shadow-sm ml-2">{row.status}</span>}
                     </div>
                 );
