@@ -6,6 +6,7 @@ import { DriverChampionshipWidget, DriverAnalyticsWidget, TyreHistoryWidget, Pit
 import { SectorBlock } from '../Components/TelemetryWidgets';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
+import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 
@@ -50,6 +51,7 @@ export const DriverProfile = () => {
     
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
+    const broadcastDelaySeconds = useRaceStore(state => state.broadcastDelaySeconds);
     const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
     const cacheHistoricalDriver = useRaceStore(state => state.cacheHistoricalDriver);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
@@ -293,8 +295,11 @@ export const DriverProfile = () => {
         ? new Date(activeSessionInfo.date_end).getTime()
         : NaN;
 
+    const effectiveSessionNow = isLive
+        ? sessionClockNow - broadcastDelaySeconds * 1000
+        : sessionClockNow;
     const sessionRemainingMs = isLive && !isRaceMode && Number.isFinite(sessionEndMs)
-        ? Math.max(0, sessionEndMs - sessionClockNow)
+        ? Math.max(0, sessionEndMs - effectiveSessionNow)
         : 0;
 
     const sessionDurationMs = !isLive && !isRaceMode
@@ -435,6 +440,7 @@ export const DriverProfile = () => {
                 </div>
 
                 <div className="flex items-center gap-3 flex-wrap justify-end">
+                    {isLive && <BroadcastSyncControl />}
                     {isRaceMode ? (
                         <>
                             <div
