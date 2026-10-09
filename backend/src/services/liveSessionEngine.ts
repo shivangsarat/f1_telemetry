@@ -510,17 +510,22 @@ export class LiveSessionEngine {
         const cutoff = Number(cutoffMs);
         const hasCutoff = Number.isFinite(cutoff);
 
-        const locationEntries = hasCutoff
-            ? [...this.locationHistory.entries()].map(([driverNumber, history]) => {
+        const locationEntries: Array<[number, any]> = [];
+        if (hasCutoff) {
+            for (const [driverNumber, history] of this.locationHistory.entries()) {
                 let location: any = null;
                 for (const row of history) {
                     const time = row?.date ? new Date(row.date).getTime() : NaN;
                     if (!Number.isFinite(time) || time > cutoff) continue;
                     if (!location || new Date(location.date || 0).getTime() <= time) location = row;
                 }
-                return [driverNumber, location] as const;
-            }).filter((entry): entry is readonly [number, any] => Boolean(entry[1]))
-            : [...this.latestLocations.entries()];
+                if (location) locationEntries.push([driverNumber, location]);
+            }
+        } else {
+            for (const [driverNumber, location] of this.latestLocations.entries()) {
+                locationEntries.push([driverNumber, location]);
+            }
+        }
 
         const cars = locationEntries.map(([driverNumber, location]) => {
             const result = resultByDriver.get(driverNumber) || {};
