@@ -361,16 +361,24 @@ export class LiveSessionEngine {
         const cars = [...this.latestLocations.entries()].map(([driverNumber, location]) => {
             const result = resultByDriver.get(driverNumber) || {};
             const info = driverInfoByNumber.get(driverNumber) || {};
+            const resolvedName =
+                result.name
+                || info.full_name
+                || info.broadcast_name
+                || info.name_acronym
+                || `Driver ${driverNumber}`;
+
             return {
                 driver_number: driverNumber,
                 x: Number(location.x),
                 y: Number(location.y),
                 z: Number(location.z || 0),
                 date: location.date,
-                position: result.position ?? null,
-                name: result.name || info.full_name || info.name_acronym || String(driverNumber),
-                acronym: info.name_acronym || null,
-                team_color: result.team_color || info.team_colour || 'ffffff'
+                position: Number.isFinite(Number(result.position)) ? Number(result.position) : null,
+                name: resolvedName,
+                acronym: result.name_acronym || info.name_acronym || null,
+                team_name: result.team_name || info.team_name || null,
+                team_color: result.team_color || info.team_colour || info.team_color || 'ffffff'
             };
         });
 
