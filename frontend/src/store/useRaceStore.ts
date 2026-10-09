@@ -35,6 +35,7 @@ type DriverLiveData = {
 
 interface RaceState {
     connected: boolean;
+    liveSessionKey: string | null;
     liveRace: LiveRaceData | null;
     driverLive: Record<number, DriverLiveData>;
 
@@ -63,6 +64,29 @@ interface RaceState {
     cacheSeasonRaces: (year: number, races: any[]) => void;
 }
 
+const mergeTelemetryHistory = (existing: any[] = [], incoming: any[] = []) => {
+    if (incoming.length === 0) return existing;
+
+    const byKey = new Map<string, any>();
+    const keyForPoint = (point: any, index: number) =>
+        String(point?.date || point?._key || point?._id || `${point?.lapX ?? 'x'}:${index}`);
+
+    existing.forEach((point, index) => byKey.set(keyForPoint(point, index), point));
+    incoming.forEach((point, index) => {
+        const key = String(point?.date || point?._key || point?._id || `${point?.lapX ?? 'x'}:incoming:${index}`);
+        byKey.set(key, point);
+    });
+
+    const merged = [...byKey.values()].sort((a, b) => {
+        const aTime = a?.date ? new Date(a.date).getTime() : NaN;
+        const bTime = b?.date ? new Date(b.date).getTime() : NaN;
+        if (Number.isFinite(aTime) && Number.isFinite(bTime)) return aTime - bTime;
+        return Number(a?.lapX || 0) - Number(b?.lapX || 0);
+    });
+
+    return merged.length > 30_000 ? merged.slice(-30_000) : merged;
+};
+
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const driverSubscriptions = new Set<number>();
@@ -70,6 +94,7 @@ const wsUrl = import.meta.env.PROD ? `wss://${window.location.host}` : 'ws://loc
 
 export const useRaceStore = create<RaceState>((set) => ({
     connected: false,
+    liveSessionKey: null,
     liveRace: null,
     driverLive: {},
     historicalRaces: {},
@@ -96,7 +121,17 @@ export const useRaceStore = create<RaceState>((set) => ({
                 const msg = JSON.parse(event.data);
 
                 if (msg.type === 'LIVE_RACE_STATE' && msg.data) {
+                    const incomingSessionKey = msg.sessionKey != null ? String(msg.sessionKey) : null;
+                    const previousSessionKey = useRaceStore.getState().liveSessionKey;
+                    const sessionChanged = Boolean(
+                        incomingSessionKey
+                        && previousSessionKey
+                        && incomingSessionKey !== previousSessionKey
+                    );
+
                     set({
+                        liveSessionKey: incomingSessionKey || previousSessionKey,
+                        ...(sessionChanged ? { driverLive: {} } : {}),
                         liveRace: {
                             results: msg.data.results || [],
                             weather: msg.data.weather || null,
@@ -138,7 +173,12 @@ export const useRaceStore = create<RaceState>((set) => ({
                             [Number(msg.driver)]: {
                                 ...(state.driverLive[Number(msg.driver)] || { telemetry: [], laps: [], stints: [] }),
                                 ...msg.data,
-                                telemetry: msg.data.telemetry ?? state.driverLive[Number(msg.driver)]?.telemetry ?? [],
+                                telemetry: msg.data.telemetry
+                                    ? mergeTelemetryHistory(
+                                        state.driverLive[Number(msg.driver)]?.telemetry || [],
+                                        msg.data.telemetry
+                                    )
+                                    : state.driverLive[Number(msg.driver)]?.telemetry || [],
                                 laps: msg.data.laps ?? state.driverLive[Number(msg.driver)]?.laps ?? [],
                                 stints: msg.data.stints ?? state.driverLive[Number(msg.driver)]?.stints ?? []
                             }
@@ -150,8 +190,7 @@ export const useRaceStore = create<RaceState>((set) => ({
                     const driver = Number(msg.driver);
                     set(state => {
                         const existing = state.driverLive[driver] || { driver: null, telemetry: [], laps: [], stints: [] };
-                        const telemetry = [...existing.telemetry, msg.data];
-                        if (telemetry.length > 30_000) telemetry.splice(0, telemetry.length - 30_000);
+                        const telemetry = mergeTelemetryHistory(existing.telemetry, [msg.data]);
                         return {
                             driverLive: {
                                 ...state.driverLive,
