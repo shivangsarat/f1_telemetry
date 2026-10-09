@@ -319,13 +319,14 @@ export const setupWebSocket = async (server: any) => {
                         if (activeKey != null) {
                             void getCleanTelemetry(String(activeKey), driver, undefined, true)
                                 .then(history => {
-                                    const delayedTelemetry = Array.isArray(history?.telemetry)
+                                    const delayedTelemetryAll = Array.isArray(history?.telemetry)
                                         ? history.telemetry.filter((point: any) => {
                                             if (!cutoffMs) return true;
                                             const time = point?.date ? new Date(point.date).getTime() : NaN;
                                             return Number.isFinite(time) && time <= cutoffMs;
                                         })
                                         : [];
+                                    const delayedTelemetry = delayedTelemetryAll.slice(-6000);
 
                                     const delayedLaps = Array.isArray(history?.laps)
                                         ? history.laps.filter((lap: any) => {
