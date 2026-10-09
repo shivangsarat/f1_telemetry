@@ -484,7 +484,13 @@ export const Dashboard = () => {
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                                     {availableSessions.map((session: any) => {
                                         const start = new Date(session.date_start).getTime();
+                                        const end = new Date(session.date_end).getTime();
                                         const selected = String(session.session_key) === String(sessionKey);
+                                        const completed = Number.isFinite(end) && end <= sessionClockNow;
+                                        const activeNow = Number.isFinite(start)
+                                            && start <= sessionClockNow
+                                            && (!Number.isFinite(end) || end > sessionClockNow);
+
                                         return (
                                             <button
                                                 type="button"
@@ -493,12 +499,37 @@ export const Dashboard = () => {
                                                 className={`text-left rounded-lg border p-4 transition ${
                                                     selected
                                                         ? 'border-blue-500/50 bg-blue-500/10'
-                                                        : 'border-gray-800 bg-gray-950/30 hover:border-gray-700 hover:bg-gray-800/50'
+                                                        : completed
+                                                            ? 'border-green-500/25 bg-green-500/5 hover:border-green-500/40'
+                                                            : activeNow
+                                                                ? 'border-green-500/40 bg-green-500/10 hover:border-green-400/60'
+                                                                : 'border-gray-800 bg-gray-950/30 hover:border-gray-700 hover:bg-gray-800/50'
                                                 }`}
                                             >
-                                                <div className={`text-xs font-black uppercase tracking-wider ${selected ? 'text-blue-300' : 'text-gray-200'}`}>
-                                                    {session.session_name || session.session_type || 'Session'}
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className={`text-xs font-black uppercase tracking-wider ${
+                                                        selected
+                                                            ? 'text-blue-300'
+                                                            : completed || activeNow
+                                                                ? 'text-green-300'
+                                                                : 'text-gray-200'
+                                                    }`}>
+                                                        {session.session_name || session.session_type || 'Session'}
+                                                    </div>
+
+                                                    {completed && (
+                                                        <span className="shrink-0 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-green-300">
+                                                            ✓ Completed
+                                                        </span>
+                                                    )}
+                                                    {!completed && activeNow && (
+                                                        <span className="shrink-0 flex items-center gap-1.5 rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-green-300">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                                            Live
+                                                        </span>
+                                                    )}
                                                 </div>
+
                                                 <div className="mt-2 text-[10px] font-mono text-gray-500">
                                                     {Number.isFinite(start)
                                                         ? new Date(start).toLocaleString(undefined, {
