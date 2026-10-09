@@ -325,13 +325,15 @@ export const LiveTrackerWidget = ({
     sessionKey,
     selectedDriver,
     sticky = true,
-    defaultMinimized = true
+    defaultMinimized = true,
+    showFullMapLink = true
 }: {
     tracker?: TrackerState | null;
     sessionKey?: string;
     selectedDriver?: number;
     sticky?: boolean;
     defaultMinimized?: boolean;
+    showFullMapLink?: boolean;
 }) => {
     const [minimized, setMinimized] = useState(defaultMinimized);
 
@@ -345,12 +347,14 @@ export const LiveTrackerWidget = ({
                     <span className="text-xs font-black uppercase tracking-widest text-gray-200">Driver Tracker</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Link
-                        to={`/race/${sessionKey || 'live'}/tracker`}
-                        className="text-[10px] font-bold uppercase tracking-wider text-blue-400 hover:text-blue-300"
-                    >
-                        Full Map
-                    </Link>
+                    {showFullMapLink && (
+                        <Link
+                            to={`/race/${sessionKey || 'live'}/tracker`}
+                            className="text-[10px] font-bold uppercase tracking-wider text-blue-400 hover:text-blue-300"
+                        >
+                            Full Map
+                        </Link>
+                    )}
                     <button
                         type="button"
                         onClick={() => setMinimized(value => !value)}
