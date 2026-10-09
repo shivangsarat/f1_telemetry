@@ -55,6 +55,7 @@ export class LiveSessionEngine {
     private readonly carData = new Map<number, any[]>();
     private readonly locationHistory = new Map<number, any[]>();
     private readonly latestLocations = new Map<number, any>();
+    private readonly driverPitState = new Map<number, boolean>();
     private trackReferenceDriver: number | null = null;
     private trackTrace: any[] = [];
     private championshipContext: any = null;
@@ -201,6 +202,20 @@ export class LiveSessionEngine {
                 continue;
             }
 
+            if (topic === 'pit') {
+                const map = this.maps.get(topic)!;
+                map.set(keyFor(topic, row), row);
+                this.syncCollection(topic);
+
+                const driverNumber = Number(row.driver_number);
+                if (Number.isFinite(driverNumber)) {
+                    const previous = this.driverPitState.get(driverNumber) || false;
+                    this.driverPitState.set(driverNumber, true);
+                    if (!previous) this.scheduleEmit();
+                }
+                continue;
+            }
+
             if (COLLECTION_TOPICS.has(topic)) {
                 const map = this.maps.get(topic)!;
                 map.set(keyFor(topic, row), row);
@@ -262,6 +277,7 @@ export class LiveSessionEngine {
         this.carData.clear();
         this.locationHistory.clear();
         this.latestLocations.clear();
+        this.driverPitState.clear();
         this.trackReferenceDriver = null;
         this.trackTrace = [];
         this.championshipContext = null;
@@ -320,7 +336,52 @@ export class LiveSessionEngine {
         if (history.length > 30_000) history.splice(0, history.length - 30_000);
         this.carData.set(dNum, history);
 
+        this.updatePitStateFromTelemetry(dNum, row);
         if (emit) this.emitLatestTelemetry(dNum);
+    }
+
+    private updatePitStateFromTelemetry(dNum: number, telemetryRow: any) {
+        if (!this.driverPitState.get(dNum)) return;
+
+        const driverPits = this.state.pits
+            .filter((pit: any) => Number(pit.driver_number) === dNum)
+            .sort((a: any, b: any) =>
+                new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime()
+            );
+        const latestPit = driverPits[driverPits.length - 1];
+        if (!latestPit?.date || !telemetryRow?.date) return;
+
+        const pitStart = new Date(latestPit.date).getTime();
+        const telemetryTime = new Date(telemetryRow.date).getTime();
+        if (!Number.isFinite(pitStart) || !Number.isFinite(telemetryTime) || telemetryTime < pitStart) return;
+
+        const elapsedMs = telemetryTime - pitStart;
+        const laneDurationSeconds = Number(
+            latestPit.lane_duration
+            ?? latestPit.pit_duration
+            ?? latestPit.duration
+        );
+        const speed = Number(telemetryRow.speed);
+
+        const durationSaysExited =
+            Number.isFinite(laneDurationSeconds)
+            && laneDurationSeconds > 0
+            && elapsedMs > (laneDurationSeconds * 1000) + 1500;
+
+        // Fallback for early live pit records whose lane duration has not been
+        // populated yet. Once the car is clearly back above pit-lane speed, the
+        // transient PIT state can be removed.
+        const telemetrySaysExited =
+            elapsedMs > 5000
+            && Number.isFinite(speed)
+            && speed > 120;
+
+        const stalePitState = elapsedMs > 90000;
+
+        if (durationSaysExited || telemetrySaysExited || stalePitState) {
+            this.driverPitState.set(dNum, false);
+            this.scheduleEmit();
+        }
     }
 
     private emitLatestTelemetry(dNum: number) {
@@ -541,7 +602,16 @@ export class LiveSessionEngine {
             availableSessions: this.availableSessions,
             sessionFinished: this.state.raceControl.some(message => String(message.flag || '').toUpperCase() === 'CHEQUERED')
         });
-        const calculated = this.applyTimingMemory(calculatedRaw);
+        const calculatedWithTiming = this.applyTimingMemory(calculatedRaw);
+        const calculated = {
+            ...calculatedWithTiming,
+            results: Array.isArray(calculatedWithTiming?.results)
+                ? calculatedWithTiming.results.map((result: any) => ({
+                    ...result,
+                    in_pit: Boolean(this.driverPitState.get(Number(result.driver_number)))
+                }))
+                : calculatedWithTiming?.results
+        };
 
         return {
             type: 'LIVE_RACE_STATE',
