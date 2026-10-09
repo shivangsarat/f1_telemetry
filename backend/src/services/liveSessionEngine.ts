@@ -146,10 +146,10 @@ export class LiveSessionEngine {
         return () => this.listeners.delete(listener);
     }
 
-    subscribeDriver(driverNumber: number, listener: (payload: any) => void) {
+    subscribeDriver(driverNumber: number, listener: (payload: any) => void, emitInitial = true) {
         if (!this.driverListeners.has(driverNumber)) this.driverListeners.set(driverNumber, new Set());
         this.driverListeners.get(driverNumber)!.add(listener);
-        listener(this.getDriverSnapshot(driverNumber));
+        if (emitInitial) listener(this.getDriverSnapshot(driverNumber));
         return () => {
             const listeners = this.driverListeners.get(driverNumber);
             listeners?.delete(listener);
@@ -805,16 +805,54 @@ export class LiveSessionEngine {
         };
     }
 
-    getDriverSnapshot(driverNumber: number, includeTelemetry = true) {
+    getDriverSnapshot(driverNumber: number, includeTelemetry = true, cutoffMs?: number) {
         const race = this.getSnapshot().data;
         const driver = race.results?.find((d: any) => Number(d.driver_number) === driverNumber) || null;
+
+        const cutoff = Number(cutoffMs);
+        const hasCutoff = Number.isFinite(cutoff);
+
+        const driverCarData = (this.carData.get(driverNumber) || []).filter((row: any) => {
+            if (!hasCutoff) return true;
+            const time = row?.date ? new Date(row.date).getTime() : NaN;
+            return Number.isFinite(time) && time <= cutoff;
+        });
+
+        const driverLocations = (this.locationHistory.get(driverNumber) || []).filter((row: any) => {
+            if (!hasCutoff) return true;
+            const time = row?.date ? new Date(row.date).getTime() : NaN;
+            return Number.isFinite(time) && time <= cutoff;
+        });
+
+        const driverLaps = this.state.laps
+            .filter(l => Number(l.driver_number) === driverNumber)
+            .filter((lap: any) => {
+                if (!hasCutoff) return true;
+                const start = lap?.date_start ? new Date(lap.date_start).getTime() : NaN;
+                return Number.isFinite(start) && start <= cutoff;
+            });
+
         const telemetry = includeTelemetry
-            ? buildTelemetryHistory(
-                this.carData.get(driverNumber) || [],
-                this.state.laps,
-                this.locationHistory.get(driverNumber) || []
-            )
+            ? buildTelemetryHistory(driverCarData, driverLaps, driverLocations)
             : undefined;
+
+        const latestLapX = telemetry?.length
+            ? Number(telemetry[telemetry.length - 1]?.lapX)
+            : NaN;
+        const latestKnownLap = Number.isFinite(latestLapX)
+            ? Math.max(1, Math.floor(latestLapX))
+            : Math.max(
+                0,
+                ...driverLaps.map((lap: any) => Number(lap.lap_number || 0))
+            );
+
+        const driverStints = this.state.stints
+            .filter(s => Number(s.driver_number) === driverNumber)
+            .filter((stint: any) => {
+                if (!hasCutoff) return true;
+                const lapStart = Number(stint?.lap_start || 0);
+                return lapStart <= latestKnownLap;
+            });
 
         return {
             type: 'LIVE_DRIVER_STATE',
@@ -824,8 +862,8 @@ export class LiveSessionEngine {
             data: {
                 driver,
                 ...(includeTelemetry ? { telemetry } : {}),
-                laps: this.state.laps.filter(l => Number(l.driver_number) === driverNumber),
-                stints: this.state.stints.filter(s => Number(s.driver_number) === driverNumber)
+                laps: driverLaps,
+                stints: driverStints
             }
         };
     }
