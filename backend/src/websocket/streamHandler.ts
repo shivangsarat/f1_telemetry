@@ -188,7 +188,7 @@ export const setupWebSocket = async (server: any) => {
                     ) {
                         const activeKey = engine.getSnapshot()?.sessionKey;
                         if (activeKey != null) {
-                            void getCleanTelemetry(String(activeKey), driver)
+                            void getCleanTelemetry(String(activeKey), driver, undefined, true)
                                 .then(history => {
                                     const delayedTelemetry = Array.isArray(history?.telemetry)
                                         ? history.telemetry.filter((point: any) => {
@@ -405,5 +405,108 @@ export const setupWebSocket = async (server: any) => {
         setInterval(() => {
             void hydrateCurrentSession(false);
         }, 30000);
+
+        let fallbackPolling = false;
+        setInterval(() => {
+            if (fallbackPolling) return;
+
+            const subscribedClients = [...clientDriverSubs.entries()]
+                .filter(([client, drivers]) => client.readyState === WebSocket.OPEN && drivers.size > 0);
+            if (subscribedClients.length === 0) return;
+
+            const staleDrivers = new Set<number>();
+            const now = Date.now();
+
+            for (const [, drivers] of subscribedClients) {
+                for (const driver of drivers) {
+                    const lastIngestedAt = engine.getDriverCarDataIngestedAt(driver);
+                    if (!lastIngestedAt || now - lastIngestedAt > 5000) {
+                        staleDrivers.add(driver);
+                    }
+                }
+            }
+
+            if (staleDrivers.size === 0) return;
+
+            const activeKey = engine.getSnapshot()?.sessionKey;
+            if (activeKey == null) return;
+
+            fallbackPolling = true;
+
+            Promise.all(
+                [...staleDrivers].map(async driver => {
+                    try {
+                        const history = await getCleanTelemetry(String(activeKey), driver, undefined, true);
+
+                        for (const [client, drivers] of subscribedClients) {
+                            if (!drivers.has(driver) || client.readyState !== WebSocket.OPEN) continue;
+
+                            const delayMs = Math.max(0, clientDelayMs.get(client) || 0);
+                            const cutoffMs = delayMs > 0 ? Date.now() - delayMs : undefined;
+
+                            const telemetry = Array.isArray(history?.telemetry)
+                                ? history.telemetry.filter((point: any) => {
+                                    if (!cutoffMs) return true;
+                                    const time = point?.date ? new Date(point.date).getTime() : NaN;
+                                    return Number.isFinite(time) && time <= cutoffMs;
+                                })
+                                : [];
+
+                            if (telemetry.length === 0) continue;
+
+                            const laps = Array.isArray(history?.laps)
+                                ? history.laps.filter((lap: any) => {
+                                    if (!cutoffMs) return true;
+                                    const start = lap?.date_start ? new Date(lap.date_start).getTime() : NaN;
+                                    return Number.isFinite(start) && start <= cutoffMs;
+                                })
+                                : [];
+
+                            const latestLapX = Number(telemetry[telemetry.length - 1]?.lapX);
+                            const latestLap = Number.isFinite(latestLapX)
+                                ? Math.max(1, Math.floor(latestLapX))
+                                : Math.max(
+                                    0,
+                                    ...laps.map((lap: any) => Number(lap.lap_number || 0))
+                                );
+
+                            const stints = Array.isArray(history?.stints)
+                                ? history.stints.filter((stint: any) =>
+                                    Number(stint?.lap_start || 0) <= latestLap
+                                )
+                                : [];
+
+                            const latestRace = engine.getSnapshot()?.data;
+                            const driverInfo = latestRace?.results?.find(
+                                (result: any) => Number(result.driver_number) === driver
+                            ) || null;
+
+                            // This payload is already sampled at T-delay, so send
+                            // immediately. Applying sendClient's delay again would
+                            // double-delay the fallback.
+                            sendClient(client, {
+                                type: 'LIVE_DRIVER_STATE',
+                                sessionKey: String(activeKey),
+                                driver,
+                                timestamp: Date.now(),
+                                data: {
+                                    driver: driverInfo,
+                                    telemetry,
+                                    laps,
+                                    stints
+                                }
+                            }, true);
+                        }
+                    } catch (error: any) {
+                        console.warn(
+                            `⚠️ Live telemetry fallback poll failed for driver ${driver}:`,
+                            error?.message || error
+                        );
+                    }
+                })
+            ).finally(() => {
+                fallbackPolling = false;
+            });
+        }, 2500);
     }
 };
