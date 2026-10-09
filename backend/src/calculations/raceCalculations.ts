@@ -788,6 +788,7 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         return {
             driver_number: dNum,
             name: row.full_name || row.name || row.name_acronym || `Unknown (${dNum})`,
+            name_acronym: row.name_acronym || null,
             team_name: row.team_name,
             team_color: row.team_colour || row.team_color || 'ffffff',
             total_time: carTotalTime,
