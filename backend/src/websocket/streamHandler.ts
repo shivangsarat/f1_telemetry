@@ -26,7 +26,7 @@ export const setupWebSocket = async (server: any) => {
     // configured delay while the normal delayed stream catches up.
     const raceSnapshotHistory: Array<{ timestamp: number; snapshot: any }> = [];
     const SNAPSHOT_HISTORY_MS = 130_000;
-    const SNAPSHOT_SAMPLE_MS = 250;
+    const SNAPSHOT_SAMPLE_MS = 1000;
     let lastRecordedSnapshotAt = 0;
 
     const recordRaceSnapshot = (snapshot: any) => {
@@ -37,7 +37,21 @@ export const setupWebSocket = async (server: any) => {
         if (timestamp - lastRecordedSnapshotAt < SNAPSHOT_SAMPLE_MS) return;
         lastRecordedSnapshotAt = timestamp;
 
-        raceSnapshotHistory.push({ timestamp, snapshot });
+        const tracker = snapshot?.data?.tracker;
+        const compactSnapshot = tracker
+            ? {
+                ...snapshot,
+                data: {
+                    ...snapshot.data,
+                    tracker: {
+                        ...tracker,
+                        trace: []
+                    }
+                }
+            }
+            : snapshot;
+
+        raceSnapshotHistory.push({ timestamp, snapshot: compactSnapshot });
         const cutoff = timestamp - SNAPSHOT_HISTORY_MS;
         while (raceSnapshotHistory.length > 1 && raceSnapshotHistory[0].timestamp < cutoff) {
             raceSnapshotHistory.shift();
@@ -264,6 +278,33 @@ export const setupWebSocket = async (server: any) => {
                     const bootstrapSnapshot = engine.getDriverSnapshot(driver, true, cutoffMs);
                     sendClient(ws, bootstrapSnapshot, true);
 
+                    if (delayMs > 0 && cutoffMs) {
+                        const replayPoints = engine.getDriverTelemetryReplay(driver, cutoffMs, Date.now());
+
+                        for (const point of replayPoints) {
+                            const pointTime = point?.date ? new Date(point.date).getTime() : NaN;
+                            if (!Number.isFinite(pointTime)) continue;
+
+                            const offset = Math.max(0, pointTime - cutoffMs);
+                            if (offset > delayMs) continue;
+
+                            scheduleClientPayload(
+                                ws,
+                                JSON.stringify({
+                                    type: 'LIVE_TELEMETRY_POINT',
+                                    sessionKey: clientDelaySessionKey.get(ws)
+                                        || (engine.getSnapshot()?.sessionKey != null
+                                            ? String(engine.getSnapshot().sessionKey)
+                                            : null),
+                                    driver,
+                                    timestamp: Date.now(),
+                                    data: point
+                                }),
+                                offset
+                            );
+                        }
+                    }
+
                     // In production the backend may have joined the MQTT session
                     // after this driver's recent car_data samples were published.
                     // MQTT only provides future events, so the retained engine
@@ -324,6 +365,32 @@ export const setupWebSocket = async (server: any) => {
                                             stints: delayedStints
                                         }
                                     }, true);
+
+                                    if (cutoffMs) {
+                                        const now = Date.now();
+                                        const futurePoints = (history?.telemetry || []).filter((point: any) => {
+                                            const time = point?.date ? new Date(point.date).getTime() : NaN;
+                                            return Number.isFinite(time) && time > cutoffMs && time <= now;
+                                        });
+
+                                        for (const point of futurePoints) {
+                                            const pointTime = new Date(point.date).getTime();
+                                            const offset = Math.max(0, pointTime - cutoffMs);
+                                            if (offset > delayMs) continue;
+
+                                            scheduleClientPayload(
+                                                ws,
+                                                JSON.stringify({
+                                                    type: 'LIVE_TELEMETRY_POINT',
+                                                    sessionKey: String(activeKey),
+                                                    driver,
+                                                    timestamp: Date.now(),
+                                                    data: point
+                                                }),
+                                                offset
+                                            );
+                                        }
+                                    }
                                 })
                                 .catch(error => {
                                     console.warn(
