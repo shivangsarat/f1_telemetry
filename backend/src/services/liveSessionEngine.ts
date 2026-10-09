@@ -492,11 +492,27 @@ export class LiveSessionEngine {
         }
     }
 
-    private getTrackerSnapshot(results: any[] = []) {
+    private getTrackerSnapshot(results: any[] = [], cutoffMs?: number) {
         const resultByDriver = new Map(results.map(driver => [Number(driver.driver_number), driver]));
         const driverInfoByNumber = new Map(this.state.drivers.map(driver => [Number(driver.driver_number), driver]));
+        const cutoff = Number(cutoffMs);
+        const hasCutoff = Number.isFinite(cutoff);
 
-        const cars = [...this.latestLocations.entries()].map(([driverNumber, location]) => {
+        const locationEntries = hasCutoff
+            ? [...this.locationHistory.entries()]
+                .map(([driverNumber, history]) => {
+                    const location = [...history]
+                        .reverse()
+                        .find((row: any) => {
+                            const time = row?.date ? new Date(row.date).getTime() : NaN;
+                            return Number.isFinite(time) && time <= cutoff;
+                        });
+                    return location ? [driverNumber, location] as const : null;
+                })
+                .filter((entry): entry is readonly [number, any] => entry !== null)
+            : [...this.latestLocations.entries()];
+
+        const cars = locationEntries.map(([driverNumber, location]) => {
             const result = resultByDriver.get(driverNumber) || {};
             const info = driverInfoByNumber.get(driverNumber) || {};
             const resolvedName =
@@ -530,8 +546,15 @@ export class LiveSessionEngine {
             }))
             .filter((corner: any) => Number.isFinite(corner.x) && Number.isFinite(corner.y));
 
+        const trace = hasCutoff
+            ? this.trackTrace.filter((point: any) => {
+                const time = point?.date ? new Date(point.date).getTime() : NaN;
+                return Number.isFinite(time) && time <= cutoff;
+            })
+            : this.trackTrace;
+
         return {
-            trace: this.trackTrace,
+            trace,
             cars,
             referenceDriver: this.trackReferenceDriver,
             circuit: {
@@ -803,6 +826,11 @@ export class LiveSessionEngine {
                 tracker: this.getTrackerSnapshot(calculated.results || [])
             }
         };
+    }
+
+    getTrackerSnapshotAt(cutoffMs?: number) {
+        const race = this.getSnapshot().data;
+        return this.getTrackerSnapshot(race.results || [], cutoffMs);
     }
 
     getDriverSnapshot(driverNumber: number, includeTelemetry = true, cutoffMs?: number) {
