@@ -198,6 +198,18 @@ export const useRaceStore = create<RaceState>((set) => ({
                     });
                 }
 
+                if (msg.type === 'LIVE_TRACKER_STATE' && msg.data) {
+                    set(state => {
+                        if (!state.liveRace) return state;
+                        return {
+                            liveRace: {
+                                ...state.liveRace,
+                                tracker: msg.data
+                            }
+                        };
+                    });
+                }
+
                 if (msg.type === 'LIVE_DRIVER_STATE' && msg.driver && msg.data) {
                     set(state => ({
                         driverLive: {
