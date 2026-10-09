@@ -603,10 +603,22 @@ export const AllDriversPaceChart = ({
 
     useEffect(() => {
         if (!plotInstance.current) return;
-        if (!Number.isFinite(Number(windowMin)) || !Number.isFinite(Number(windowMax))) return;
+
+        const fullMax = Math.max(
+            Number(maxRaceLap || 0),
+            ...activeResults.map(driver =>
+                Math.max(0, ...(driver.lapsHistory || []).map((lap: any) => Number(lap.lap_number || 0)))
+            )
+        );
+
+        if (!Number.isFinite(Number(windowMin)) || !Number.isFinite(Number(windowMax))) {
+            if (fullMax > 0) plotInstance.current.setScale('x', { min: 1, max: fullMax });
+            return;
+        }
+
         if (Number(windowMax) <= Number(windowMin)) return;
         plotInstance.current.setScale('x', { min: Number(windowMin), max: Number(windowMax) });
-    }, [windowMin, windowMax, activeResults, hiddenDrivers]);
+    }, [windowMin, windowMax, activeResults, hiddenDrivers, maxRaceLap]);
 
     const filteredDrivers = activeResults.filter(d => 
         (d.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -805,10 +817,22 @@ export const AllDriversLapTimesChart = ({
 
     useEffect(() => {
         if (!plotRef.current) return;
-        if (!Number.isFinite(Number(windowMin)) || !Number.isFinite(Number(windowMax))) return;
+
+        const fullMax = Math.max(
+            Number(maxRaceLap || 0),
+            ...activeResults.map(driver =>
+                Math.max(0, ...(driver.lapsHistory || []).map((lap: any) => Number(lap.lap_number || 0)))
+            )
+        );
+
+        if (!Number.isFinite(Number(windowMin)) || !Number.isFinite(Number(windowMax))) {
+            if (fullMax > 0) plotRef.current.setScale('x', { min: 1, max: fullMax });
+            return;
+        }
+
         if (Number(windowMax) <= Number(windowMin)) return;
         plotRef.current.setScale('x', { min: Number(windowMin), max: Number(windowMax) });
-    }, [windowMin, windowMax, activeResults, hiddenDrivers]);
+    }, [windowMin, windowMax, activeResults, hiddenDrivers, maxRaceLap]);
 
     const filteredDrivers = activeResults.filter(driver =>
         (driver.name || '').toLowerCase().includes(searchQuery.toLowerCase())
