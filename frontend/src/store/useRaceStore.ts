@@ -93,7 +93,9 @@ const mergeTelemetryHistory = (existing: any[] = [], incoming: any[] = []) => {
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const driverSubscriptions = new Set<number>();
-const wsUrl = import.meta.env.PROD ? `wss://${window.location.host}` : 'ws://localhost:8080';
+const wsUrl = import.meta.env.PROD
+    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+    : 'ws://localhost:8080';
 
 export const useRaceStore = create<RaceState>((set) => ({
     connected: false,
