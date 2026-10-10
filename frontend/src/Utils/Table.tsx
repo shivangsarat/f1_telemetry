@@ -25,23 +25,24 @@ export function Table<T>({
 }: TableProps<T>) {
     const [expandedRow, setExpandedRow] = useState<string | number | null>(null);
     const rowRefs = useRef(new Map<string | number, HTMLTableRowElement>());
-    const previousRects = useRef(new Map<string | number, DOMRect>());
+    const previousOffsets = useRef(new Map<string | number, number>());
 
     useLayoutEffect(() => {
         if (!animateReorder) {
-            previousRects.current.clear();
+            previousOffsets.current.clear();
             return;
         }
 
-        const nextRects = new Map<string | number, DOMRect>();
+        const nextOffsets = new Map<string | number, number>();
         rowRefs.current.forEach((element, key) => {
-            const nextRect = element.getBoundingClientRect();
-            nextRects.set(key, nextRect);
+            // Layout offsets exclude page scrolling and active animation transforms.
+            const nextOffset = element.offsetTop;
+            nextOffsets.set(key, nextOffset);
 
-            const previousRect = previousRects.current.get(key);
-            if (!previousRect) return;
+            const previousOffset = previousOffsets.current.get(key);
+            if (previousOffset === undefined) return;
 
-            const deltaY = previousRect.top - nextRect.top;
+            const deltaY = previousOffset - nextOffset;
             if (Math.abs(deltaY) < 1) return;
 
             element.getAnimations().forEach(animation => animation.cancel());
@@ -58,7 +59,7 @@ export function Table<T>({
             );
         });
 
-        previousRects.current = nextRects;
+        previousOffsets.current = nextOffsets;
     }, [data, animateReorder]);
 
     if (!data || !Array.isArray(data)) {
