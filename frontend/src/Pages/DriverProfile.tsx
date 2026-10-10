@@ -44,6 +44,20 @@ const formatLapTime = (seconds: number | null) => {
     return m > 0 ? `${m}:${s.padStart(6, '0')}` : `${s}s`;
 };
 
+const parseLiveTimestamp = (value: any) => {
+    if (!value) return NaN;
+
+    let safe = String(value)
+        .replace(/(\.\d{3})\d+/, '$1')
+        .replace('+00:00', 'Z');
+
+    if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(safe)) {
+        safe += 'Z';
+    }
+
+    return new Date(safe).getTime();
+};
+
 export const DriverProfile = () => {
     const { sessionKey, driverId } = useParams();
     const driverNumber = Number(driverId);
@@ -343,7 +357,15 @@ export const DriverProfile = () => {
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
     const isPreLapTelemetry = Boolean(latestTelemetry?.preLap);
-    const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
+    const latestLapX = Number(latestTelemetry?.lapX);
+    const telemetryLapNumber = !isPreLapTelemetry && Number.isFinite(latestLapX) && latestLapX >= 1
+        ? Math.floor(latestLapX)
+        : null;
+    const currentLiveLapObj = telemetryLapNumber !== null
+        ? [...(activeData.laps || [])].reverse().find(
+            (lap: any) => Number(lap.lap_number) === telemetryLapNumber
+        ) || null
+        : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
     const validCompletedLaps = completedLaps.filter((lap: any) => !deletedLapByNumber.has(Number(lap.lap_number)));
     const bestLapObj = validCompletedLaps.length > 0
@@ -355,10 +377,23 @@ export const DriverProfile = () => {
         ? Math.max(0, Math.min(0.999, Number(latestTelemetry.lapX) - Math.floor(Number(latestTelemetry.lapX))))
         : 0;
 
-    const latestTelemetryTime = latestTelemetry?.date ? new Date(latestTelemetry.date).getTime() : NaN;
-    const currentLapStartTime = currentLiveLapObj?.date_start ? new Date(currentLiveLapObj.date_start).getTime() : NaN;
-    const elapsedCurrentLap = !isPreLapTelemetry && Number.isFinite(latestTelemetryTime) && Number.isFinite(currentLapStartTime)
-        ? Math.max(0, (latestTelemetryTime - currentLapStartTime) / 1000)
+    const latestTelemetryTime = parseLiveTimestamp(latestTelemetry?.date);
+    const currentLapStartTime = parseLiveTimestamp(currentLiveLapObj?.date_start);
+    const rawElapsedCurrentLap = !isPreLapTelemetry
+        && telemetryLapNumber !== null
+        && Number(currentLiveLapObj?.lap_number) === telemetryLapNumber
+        && Number.isFinite(latestTelemetryTime)
+        && Number.isFinite(currentLapStartTime)
+        ? (latestTelemetryTime - currentLapStartTime) / 1000
+        : NaN;
+
+    // Never display obviously corrupt live projections. A current F1 lap cannot
+    // legitimately be an hour old while the car is actively circulating. If
+    // source timestamps do not align, prefer "--" until a coherent sample lands.
+    const elapsedCurrentLap = Number.isFinite(rawElapsedCurrentLap)
+        && rawElapsedCurrentLap >= 0
+        && rawElapsedCurrentLap <= 600
+        ? rawElapsedCurrentLap
         : null;
 
     // Update continuously from every telemetry sample rather than only when a
