@@ -3,8 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useRaceStore } from '../store/useRaceStore';
 import { LiveTrackMap } from '../Components/LiveTrackMap';
 import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
-import { RaceControlToastOnly, TrackConditionFrame } from '../Components/LiveRaceControl';
-import { getCurrentTrackCondition, getTrackConditionTheme } from '../Utils/raceControlTheme';
+import { RaceControlToastOnly } from '../Components/LiveRaceControl';
 
 export const LiveTracker = () => {
     const { sessionKey } = useParams();
@@ -13,21 +12,18 @@ export const LiveTracker = () => {
     const connected = useRaceStore(state => state.connected);
     const isLive = sessionKey === 'live' || sessionKey === 'latest';
     const liveRaceControl = isLive ? (liveRace?.raceControl || []) : [];
-    const trackCondition = getCurrentTrackCondition(liveRaceControl);
-    const trackTheme = getTrackConditionTheme(trackCondition);
 
     useEffect(() => {
         if (isLive) connect();
     }, [isLive, connect]);
 
     return (
-        <div className={`min-h-screen ${isLive ? trackTheme.pageClass : 'bg-black'} text-white p-6 flex flex-col gap-6 transition-colors duration-300`}>
+        <div className="min-h-screen bg-black text-white p-6 flex flex-col gap-6">
             <RaceControlToastOnly
                 messages={liveRaceControl}
                 sessionKey={liveRace?.sessionInfo?.session_key}
                 enabled={isLive}
             />
-            <TrackConditionFrame messages={liveRaceControl} enabled={isLive} />
             <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div className="flex items-center gap-5">
                     <Link
@@ -59,7 +55,7 @@ export const LiveTracker = () => {
                     The realtime tracker is available on the live session.
                 </div>
             ) : (
-                <div className={`bg-gray-900 border ${trackTheme.panelBorderClass} rounded-xl p-4 md:p-6 transition-colors duration-300`}>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 md:p-6">
                     <LiveTrackMap tracker={liveRace?.tracker} />
                 </div>
             )}
