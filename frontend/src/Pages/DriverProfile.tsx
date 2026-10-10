@@ -342,6 +342,7 @@ export const DriverProfile = () => {
     const activeLapNumber = Math.max(1, Math.floor(currentSliderVal));
 
     const latestTelemetry = processedData.length > 0 ? processedData[processedData.length - 1] : null;
+    const isPreLapTelemetry = Boolean(latestTelemetry?.preLap);
     const currentLiveLapObj = activeData.laps?.length > 0 ? activeData.laps[activeData.laps.length - 1] : null;
     const completedLaps = (activeData.laps || []).filter((l: any) => typeof l.lap_duration === 'number' && l.lap_duration > 0);
     const validCompletedLaps = completedLaps.filter((lap: any) => !deletedLapByNumber.has(Number(lap.lap_number)));
@@ -350,13 +351,13 @@ export const DriverProfile = () => {
         : null;
     const sessionBests = isLive ? liveRace?.sessionBests : raceDetails?.sessionBests;
 
-    const liveLapProgress = latestTelemetry && Number.isFinite(Number(latestTelemetry.lapX))
+    const liveLapProgress = !isPreLapTelemetry && latestTelemetry && Number.isFinite(Number(latestTelemetry.lapX))
         ? Math.max(0, Math.min(0.999, Number(latestTelemetry.lapX) - Math.floor(Number(latestTelemetry.lapX))))
         : 0;
 
     const latestTelemetryTime = latestTelemetry?.date ? new Date(latestTelemetry.date).getTime() : NaN;
     const currentLapStartTime = currentLiveLapObj?.date_start ? new Date(currentLiveLapObj.date_start).getTime() : NaN;
-    const elapsedCurrentLap = Number.isFinite(latestTelemetryTime) && Number.isFinite(currentLapStartTime)
+    const elapsedCurrentLap = !isPreLapTelemetry && Number.isFinite(latestTelemetryTime) && Number.isFinite(currentLapStartTime)
         ? Math.max(0, (latestTelemetryTime - currentLapStartTime) / 1000)
         : null;
 
@@ -569,7 +570,11 @@ export const DriverProfile = () => {
                             
                             <div className="flex flex-col gap-2 border-r border-gray-800 pr-4 justify-center">
                                 <div className="flex justify-between items-end">
-                                    <span className="text-gray-400 text-xs uppercase tracking-widest font-bold">Current Lap (L{currentLiveLapObj?.lap_number || '-'})</span>
+                                    <span className="text-gray-400 text-xs uppercase tracking-widest font-bold">
+                                        {isPreLapTelemetry
+                                            ? 'Formation / Pre-Lap'
+                                            : `Current Lap (L${currentLiveLapObj?.lap_number || '-'})`}
+                                    </span>
                                 </div>
                                 <div className="flex gap-6 font-mono text-xs">
                                     <div><span className="text-gray-500">S1:</span> <span className="text-white">{currentLiveLapObj?.duration_sector_1 ? currentLiveLapObj.duration_sector_1.toFixed(3) : '-'}</span></div>
@@ -580,7 +585,7 @@ export const DriverProfile = () => {
                                     <div>
                                         <span className="text-gray-500 text-[9px] font-bold uppercase tracking-widest block mb-1">Lap Progress</span>
                                         <span className="font-mono text-white text-base font-black">
-                                            {Math.round(liveLapProgress * 100)}%
+                                            {isPreLapTelemetry ? '--' : `${Math.round(liveLapProgress * 100)}%`}
                                         </span>
                                     </div>
                                     <div>
