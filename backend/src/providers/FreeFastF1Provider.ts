@@ -7,6 +7,7 @@ export class FreeFastF1Provider implements ITelemetryProvider {
     private ws: WebSocket | null = null;
     private callbacks: TelemetryCallbacks | null = null;
     private subscribedDrivers = new Set<number>();
+    private telemetryStartTime = new Map<number, number>();
 
     constructor(wsUrl = 'ws://localhost:8082') {
         this.wsUrl = wsUrl;
@@ -42,8 +43,20 @@ export class FreeFastF1Provider implements ITelemetryProvider {
                             const car = data.telemetry.Entries[0]?.Cars?.[String(driverNum)];
                             if (!car) continue;
                             const ch = car.Channels || {};
+                            const now = Date.now();
+                            if (!this.telemetryStartTime.has(driverNum)) {
+                                this.telemetryStartTime.set(driverNum, now);
+                            }
+                            const start = this.telemetryStartTime.get(driverNum) || now;
+
                             this.callbacks?.onTelemetry?.(driverNum, {
-                                lapX: Date.now(),
+                                // The local decoder does not provide normal OpenF1
+                                // lap rows here. Keep a small monotonic pre-lap x
+                                // coordinate rather than using epoch milliseconds,
+                                // which can destabilize uPlot.
+                                lapX: Math.min(0.999, Math.max(0, now - start) / (30 * 60 * 1000)),
+                                preLap: true,
+                                date: new Date(now).toISOString(),
                                 speed: Number(ch['2'] || 0),
                                 rpm: Number(ch['0'] || 0),
                                 gear: Number(ch['3'] || 0),
@@ -76,5 +89,6 @@ export class FreeFastF1Provider implements ITelemetryProvider {
         this.ws?.close();
         this.ws = null;
         this.subscribedDrivers.clear();
+        this.telemetryStartTime.clear();
     }
 }
