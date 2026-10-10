@@ -361,7 +361,12 @@ const calculateProjectedChampionship = (drivers: any[], championship: any[], isS
     return result;
 };
 
-export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], locations: any[] = []) => {
+export const buildTelemetryHistory = (
+    carData: any[] = [],
+    laps: any[] = [],
+    locations: any[] = [],
+    fallbackStartMs?: number
+) => {
     const telemetryDriverNumber = carData
         .map((row: any) => Number(row?.driver_number))
         .find((driverNumber: number) => Number.isFinite(driverNumber));
@@ -371,14 +376,17 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
         : laps;
 
     const orderedLaps = [...driverLaps].sort((a, b) => num(a.lap_number) - num(b.lap_number));
-    if (!orderedLaps.length) return [];
-
-    const completed = orderedLaps.filter(l => num(l.lap_duration) > 0 && l.date_start);
-    const lastCompletedDuration = completed.length ? num(completed[completed.length - 1].lap_duration, 90) : 90;
 
     const orderedCarData = [...carData]
         .filter(t => t.date)
         .sort((a, b) => parseDate(a.date) - parseDate(b.date));
+    if (!orderedCarData.length) return [];
+
+    const completed = orderedLaps.filter(l => num(l.lap_duration) > 0 && l.date_start);
+    const lastCompletedDuration = completed.length ? num(completed[completed.length - 1].lap_duration, 90) : 90;
+    const firstTelemetryTime = Number.isFinite(Number(fallbackStartMs))
+        ? Number(fallbackStartMs)
+        : parseDate(orderedCarData[0].date);
     const orderedLocations = [...locations]
         .filter(location => location.date && Number.isFinite(Number(location.x)) && Number.isFinite(Number(location.y)))
         .sort((a, b) => parseDate(a.date) - parseDate(b.date));
@@ -429,15 +437,25 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
             });
 
             let lapX: number;
+            let preLap = false;
             if (lap) {
                 const start = parseDate(lap.date_start);
                 lapX = num(lap.lap_number) + Math.max(0, Math.min(0.999, (time - start) / (num(lap.lap_duration) * 1000)));
             } else {
-                const candidates = orderedLaps.filter(l => parseDate(l.date_start) <= time);
+                const candidates = orderedLaps.filter(l => l.date_start && parseDate(l.date_start) <= time);
                 const current = candidates[candidates.length - 1];
-                if (!current) return null;
 
-                const currentStart = parseDate(current.date_start);
+                // Formation-lap / pre-lap car_data exists before OpenF1 has a
+                // normal lap row. Previously we discarded every one of these
+                // samples, so the cockpit stayed at zero. Give that period a
+                // stable sub-lap x coordinate solely for chart ordering while
+                // preserving the real speed/RPM/inputs.
+                if (!current) {
+                    preLap = true;
+                    const elapsedMs = Math.max(0, time - firstTelemetryTime);
+                    lapX = Math.min(0.999, elapsedMs / (30 * 60 * 1000));
+                } else {
+                    const currentStart = parseDate(current.date_start);
                 const currentDuration = num(current.lap_duration);
                 const estimate = currentDuration > 0 ? currentDuration : lastCompletedDuration;
 
@@ -461,6 +479,7 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
                 } else {
                     lapX = num(current.lap_number)
                         + Math.max(0, (time - currentStart) / (Math.max(1, estimate) * 1000));
+                }
                 }
             }
 
@@ -499,6 +518,7 @@ export const buildTelemetryHistory = (carData: any[] = [], laps: any[] = [], loc
 
             return {
                 lapX,
+                preLap,
                 date: t.date,
                 speed,
                 throttle: num(t.throttle),
