@@ -7,6 +7,7 @@ export interface DriverTelemetryPoint {
     brake: number;
     drs?: number;
     date?: string;
+    preLap?: boolean;
 }
 
 export interface TelemetryCallbacks {
