@@ -827,27 +827,45 @@ export const getRaceDetails = async (sessionKey: string, liveOverride = false) =
         getCached(`race_control_${activeSessionKey}`, ttl, () => openF1Request(`${OPENF1_BASE}/race_control?session_key=${activeSessionKey}`))
     ]);
 
+    const calculated = calculateRaceView({
+        sessionInfo,
+        meetingInfo,
+        circuitInfo,
+        availableSessions,
+        drivers: driversRes.data || [],
+        intervals: intervalsRes.data || [],
+        positions: positionsRes.data || [],
+        laps: lapsRes.data || [],
+        stints: stintsRes.data || [],
+        pits: pitsRes.data || [],
+        weather: weatherRes.data?.[weatherRes.data.length - 1] || null,
+        raceControl: raceControlRes.data || [],
+        championshipDrivers: championshipDriversRes.data || [],
+        championshipTeams: championshipTeamsRes.data || [],
+        remainingChampionshipPoints,
+        scheduledTotalLaps,
+        isRace
+    });
+
     return {
         active_session_key: activeSessionKey !== sessionKey ? activeSessionKey : undefined,
-        ...calculateRaceView({
-            sessionInfo,
-            meetingInfo,
-            circuitInfo,
-            availableSessions,
-            drivers: driversRes.data || [],
-            intervals: intervalsRes.data || [],
-            positions: positionsRes.data || [],
-            laps: lapsRes.data || [],
-            stints: stintsRes.data || [],
-            pits: pitsRes.data || [],
-            weather: weatherRes.data?.[weatherRes.data.length - 1] || null,
-            raceControl: raceControlRes.data || [],
-            championshipDrivers: championshipDriversRes.data || [],
-            championshipTeams: championshipTeamsRes.data || [],
-            remainingChampionshipPoints,
-            scheduledTotalLaps,
-            isRace
-        })
+        ...calculated,
+        ...(liveOverride ? {
+            // Backend-only seed used by LiveSessionEngine so joining/revisiting a
+            // live session does not throw away laps/positions/stints that happened
+            // before the MQTT process started. The engine removes this field from
+            // browser-facing snapshots after hydration.
+            _liveSeed: {
+                drivers: driversRes.data || [],
+                intervals: intervalsRes.data || [],
+                positions: positionsRes.data || [],
+                laps: lapsRes.data || [],
+                stints: stintsRes.data || [],
+                pits: pitsRes.data || [],
+                championshipDrivers: championshipDriversRes.data || [],
+                championshipTeams: championshipTeamsRes.data || []
+            }
+        } : {})
     };
 };
 
