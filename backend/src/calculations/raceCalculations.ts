@@ -27,7 +27,19 @@ const num = (value: any, fallback = 0) => {
 
 const parseDate = (value: any) => {
     if (!value) return NaN;
-    const safe = String(value).replace(/(\.\d{3})\d+/, '$1').replace('+00:00', 'Z');
+
+    let safe = String(value)
+        .replace(/(\.\d{3})\d+/, '$1')
+        .replace('+00:00', 'Z');
+
+    // OpenF1 payloads are UTC, but some rows can arrive without an explicit
+    // timezone suffix. JavaScript interprets those as local time, which created
+    // an exact ~1 hour skew on Irish Summer Time between car_data and lap rows.
+    // That inflated lapX, delta and projected-lap calculations dramatically.
+    if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(safe)) {
+        safe += 'Z';
+    }
+
     return new Date(safe).getTime();
 };
 
