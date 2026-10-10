@@ -7,6 +7,8 @@ import { SectorBlock } from '../Components/TelemetryWidgets';
 import { LiveTrackerWidget } from '../Components/LiveTrackMap';
 import { DriverBadges } from '../Components/DriverBadges';
 import { BroadcastSyncControl } from '../Components/BroadcastSyncControl';
+import { RaceControlToastOnly, TrackConditionFrame } from '../Components/LiveRaceControl';
+import { getCurrentTrackCondition, getTrackConditionTheme } from '../Utils/raceControlTheme';
 import { getQualifyingPhaseClock } from '../Utils/sessionTiming';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -67,6 +69,9 @@ export const DriverProfile = () => {
     const connect = useRaceStore(state => state.connect);
     const liveRace = useRaceStore(state => state.liveRace);
     const broadcastDelaySeconds = useRaceStore(state => state.broadcastDelaySeconds);
+    const liveRaceControl = isLive ? (liveRace?.raceControl || []) : [];
+    const trackCondition = getCurrentTrackCondition(liveRaceControl);
+    const trackTheme = getTrackConditionTheme(trackCondition);
     const cacheHistoricalRace = useRaceStore(state => state.cacheHistoricalRace);
     const cacheHistoricalDriver = useRaceStore(state => state.cacheHistoricalDriver);
     useEffect(() => { if (isLive) connect(); }, [isLive, connect]);
@@ -438,7 +443,13 @@ export const DriverProfile = () => {
     const isLiveTracking = isAutoScroll && isLive;
 
     return (
-        <div className="p-6 bg-black text-white min-h-screen flex flex-col gap-6">
+        <div className={`p-6 ${isLive ? trackTheme.pageClass : 'bg-black'} text-white min-h-screen flex flex-col gap-6 transition-colors duration-300`}>
+            <RaceControlToastOnly
+                messages={liveRaceControl}
+                sessionKey={liveRace?.sessionInfo?.session_key}
+                enabled={isLive}
+            />
+            <TrackConditionFrame messages={liveRaceControl} enabled={isLive} />
 
             <div className="flex justify-between items-start gap-6 flex-wrap">
                 <div className="flex flex-col gap-2 min-w-0">
