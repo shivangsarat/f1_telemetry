@@ -89,6 +89,43 @@ const mergeTelemetryHistory = (existing: any[] = [], incoming: any[] = []) => {
     return merged.length > 30_000 ? merged.slice(-30_000) : merged;
 };
 
+const mergeDriverLaps = (existing: any[] = [], incoming: any[] = []) => {
+    if (!incoming.length) return existing;
+
+    const byLap = new Map<number, any>();
+    for (const lap of existing) {
+        const lapNumber = Number(lap?.lap_number);
+        if (Number.isFinite(lapNumber)) byLap.set(lapNumber, lap);
+    }
+    for (const lap of incoming) {
+        const lapNumber = Number(lap?.lap_number);
+        if (!Number.isFinite(lapNumber)) continue;
+        byLap.set(lapNumber, { ...(byLap.get(lapNumber) || {}), ...lap });
+    }
+
+    return [...byLap.values()].sort(
+        (a, b) => Number(a?.lap_number || 0) - Number(b?.lap_number || 0)
+    );
+};
+
+const mergeDriverStints = (existing: any[] = [], incoming: any[] = []) => {
+    if (!incoming.length) return existing;
+
+    const keyForStint = (stint: any, index: number) =>
+        String(stint?.stint_number ?? stint?._key ?? stint?._id ?? `${stint?.lap_start ?? 'x'}:${index}`);
+
+    const byKey = new Map<string, any>();
+    existing.forEach((stint, index) => byKey.set(keyForStint(stint, index), stint));
+    incoming.forEach((stint, index) => {
+        const key = keyForStint(stint, index);
+        byKey.set(key, { ...(byKey.get(key) || {}), ...stint });
+    });
+
+    return [...byKey.values()].sort(
+        (a, b) => Number(a?.lap_start || 0) - Number(b?.lap_start || 0)
+    );
+};
+
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const driverSubscriptions = new Set<number>();
@@ -203,8 +240,18 @@ export const useRaceStore = create<RaceState>((set) => ({
                                         msg.data.telemetry
                                     )
                                     : state.driverLive[Number(msg.driver)]?.telemetry || [],
-                                laps: msg.data.laps ?? state.driverLive[Number(msg.driver)]?.laps ?? [],
-                                stints: msg.data.stints ?? state.driverLive[Number(msg.driver)]?.stints ?? []
+                                laps: msg.data.laps
+                                    ? mergeDriverLaps(
+                                        state.driverLive[Number(msg.driver)]?.laps || [],
+                                        msg.data.laps
+                                    )
+                                    : state.driverLive[Number(msg.driver)]?.laps || [],
+                                stints: msg.data.stints
+                                    ? mergeDriverStints(
+                                        state.driverLive[Number(msg.driver)]?.stints || [],
+                                        msg.data.stints
+                                    )
+                                    : state.driverLive[Number(msg.driver)]?.stints || []
                             }
                         }
                     }));
