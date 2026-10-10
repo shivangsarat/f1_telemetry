@@ -92,6 +92,29 @@ export class LiveSessionEngine {
         this.state.championshipTeams = calculated.championshipTeams || this.state.championshipTeams;
         this.availableSessions = calculated.availableSessions || this.availableSessions;
 
+        const liveSeed = calculated._liveSeed;
+        if (liveSeed && typeof liveSeed === 'object') {
+            const seedTopic = (topic: string, rows: any[] = []) => {
+                const map = this.maps.get(topic);
+                if (!map || !Array.isArray(rows)) return;
+
+                for (const row of rows) {
+                    if (!row || typeof row !== 'object') continue;
+                    map.set(keyFor(topic, row), row);
+                }
+                this.syncCollection(topic);
+            };
+
+            seedTopic('drivers', liveSeed.drivers);
+            seedTopic('intervals', liveSeed.intervals);
+            seedTopic('position', liveSeed.positions);
+            seedTopic('laps', liveSeed.laps);
+            seedTopic('stints', liveSeed.stints);
+            seedTopic('pit', liveSeed.pits);
+            seedTopic('championship_drivers', liveSeed.championshipDrivers);
+            seedTopic('championship_teams', liveSeed.championshipTeams);
+        }
+
         // A newly-started live session can begin emitting laps/weather before the
         // MQTT drivers topic is replayed. Seed the live engine with driver metadata
         // from the REST-calculated results so those incoming lap rows immediately
@@ -130,8 +153,10 @@ export class LiveSessionEngine {
         };
 
         // The REST bootstrap is already calculated by the same pure layer. Preserve
-        // it until the MQTT collections have enough raw state to replace it.
-        this.bootstrapSnapshot = calculated;
+        // it until the MQTT collections have enough raw state to replace it, but
+        // never expose the backend-only raw seed to browser clients.
+        const { _liveSeed: _discardLiveSeed, ...browserBootstrap } = calculated;
+        this.bootstrapSnapshot = browserBootstrap;
     }
 
     private bootstrapSnapshot: any | null = null;
