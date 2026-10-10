@@ -25,6 +25,17 @@ const num = (value: any, fallback = 0) => {
     return Number.isFinite(n) ? n : fallback;
 };
 
+const flag = (value: any) => {
+    if (value === true || value === 1) return true;
+    if (value === false || value === 0 || value === null || value === undefined || value === '') return false;
+
+    const normalized = String(value).trim().toLowerCase();
+    return normalized === 'true'
+        || normalized === '1'
+        || normalized === 'yes'
+        || normalized === 'y';
+};
+
 const parseDate = (value: any) => {
     if (!value) return NaN;
 
@@ -815,8 +826,32 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
 
         const officialPosition = num(latestPositions[String(dNum)]?.position, 99);
         const startingPosition = num(initialPositions[String(dNum)]?.position, officialPosition);
-        const explicitOut = /DNF|OUT|RETIRED/.test(String(row.gap_to_leader || '').toUpperCase() + ' ' + String(row.interval || '').toUpperCase());
-        const status = row.dns ? 'DNS' : row.dnf || row.dsq || explicitOut ? 'DNF' : (isRace && completedLapNumber === 0 && maxRaceLap > 3 ? 'DNS' : (isRace && maxRaceLap > 5 && maxRaceLap - completedLapNumber > 4 ? 'DNF' : 'Active'));
+        const explicitOut = /DNF|OUT|RETIRED/.test(
+            String(row.gap_to_leader || '').toUpperCase()
+            + ' '
+            + String(row.interval || '').toUpperCase()
+        );
+        const officialStatus = String(row.status || '').trim().toUpperCase();
+        const explicitDns = flag(row.dns) || officialStatus === 'DNS' || officialStatus === 'DID NOT START';
+        const explicitDnf = flag(row.dnf)
+            || flag(row.dsq)
+            || officialStatus === 'DNF'
+            || officialStatus === 'DSQ'
+            || officialStatus === 'RETIRED'
+            || explicitOut;
+
+        // OpenF1 can encode dns/dnf/dsq as strings ("false"/"true").
+        // Treating non-empty strings as booleans marked every live driver DNS.
+        // Only trust normalized explicit flags, then use lap-based fallbacks.
+        const status = explicitDns
+            ? 'DNS'
+            : explicitDnf
+                ? 'DNF'
+                : (isRace && completedLapNumber === 0 && maxRaceLap > 3
+                    ? 'DNS'
+                    : (isRace && maxRaceLap > 5 && maxRaceLap - completedLapNumber > 4
+                        ? 'DNF'
+                        : 'Active'));
 
         const totalSeconds = completedLaps.reduce((sum, l) => sum + num(l.lap_duration), 0);
         const carTotalTime = isRace && totalSeconds > 0
