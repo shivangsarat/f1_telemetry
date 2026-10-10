@@ -108,15 +108,9 @@ export const TrackConditionFrame = ({ messages, enabled = true }: { messages: an
     const theme = getTrackConditionTheme(condition);
 
     return (
-        <>
-            <div
-                aria-hidden="true"
-                className={`fixed inset-0 z-[70] pointer-events-none border-2 ${theme.frameClass} transition-all duration-300`}
-            />
-            <div
-                aria-hidden="true"
-                className={`fixed top-0 left-0 right-0 z-[70] h-1 pointer-events-none ${theme.panelBorderClass.replace('border-', 'bg-')}`}
-            />
-        </>
+        <div
+            aria-hidden="true"
+            className={`fixed inset-0 z-[70] pointer-events-none border-2 ${theme.frameClass} transition-all duration-300`}
+        />
     );
 };
