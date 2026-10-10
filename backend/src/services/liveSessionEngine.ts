@@ -54,6 +54,7 @@ export class LiveSessionEngine {
     private readonly driverListeners = new Map<number, Set<(payload: any) => void>>();
     private readonly telemetryListeners = new Set<(payload: any) => void>();
     private readonly carData = new Map<number, any[]>();
+    private readonly telemetryStartTime = new Map<number, number>();
     private readonly locationHistory = new Map<number, any[]>();
     private readonly latestLocations = new Map<number, any>();
     private readonly driverPitState = new Map<number, boolean>();
@@ -321,6 +322,7 @@ export class LiveSessionEngine {
         };
         this.maps.forEach(map => map.clear());
         this.carData.clear();
+        this.telemetryStartTime.clear();
         this.locationHistory.clear();
         this.latestLocations.clear();
         this.driverPitState.clear();
@@ -372,6 +374,10 @@ export class LiveSessionEngine {
         const dNum = Number(row.driver_number);
         if (!Number.isFinite(dNum)) return;
         const history = this.carData.get(dNum) || [];
+        const rowTime = row?.date ? new Date(row.date).getTime() : NaN;
+        if (!this.telemetryStartTime.has(dNum) && Number.isFinite(rowTime)) {
+            this.telemetryStartTime.set(dNum, rowTime);
+        }
         const key = row._key || row._id || row.date;
         const index = history.findIndex(x => (x._key || x._id || x.date) === key);
         if (index >= 0) history[index] = row;
@@ -460,7 +466,12 @@ export class LiveSessionEngine {
 
         const history = this.carData.get(dNum) || [];
         const locations = this.locationHistory.get(dNum) || [];
-        const telemetry = buildTelemetryHistory(history.slice(-12), this.state.laps, locations.slice(-24));
+        const telemetry = buildTelemetryHistory(
+            history.slice(-12),
+            this.state.laps,
+            locations.slice(-24),
+            this.telemetryStartTime.get(dNum)
+        );
         const point = telemetry[telemetry.length - 1];
         if (!point) return;
 
@@ -878,7 +889,12 @@ export class LiveSessionEngine {
         });
 
         const telemetry = includeTelemetry
-            ? buildTelemetryHistory(carData, laps, locations)
+            ? buildTelemetryHistory(
+                carData,
+                laps,
+                locations,
+                this.telemetryStartTime.get(driverNumber)
+            )
             : undefined;
 
         const latestLapX = includeTelemetry && telemetry?.length
