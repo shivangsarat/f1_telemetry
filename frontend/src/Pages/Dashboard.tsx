@@ -315,6 +315,9 @@ export const Dashboard = () => {
                                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                                     {currentStint.compound} ({currentStint.length}L)
                                 </span>
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">
+                                    · {row.pit_stops?.length ?? 0} {(row.pit_stops?.length ?? 0) === 1 ? 'stop' : 'stops'}
+                                </span>
                                 <div 
                                     className="w-2.5 h-2.5 rounded-full border border-gray-700 shadow-sm" 
                                     style={{ backgroundColor: getTyreColor(currentStint.compound) }} 
