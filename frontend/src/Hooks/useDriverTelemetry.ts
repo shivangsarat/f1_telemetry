@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRaceStore } from '../store/useRaceStore';
 
 const EMPTY_DRIVER_DATA = {
@@ -7,6 +7,20 @@ const EMPTY_DRIVER_DATA = {
     laps: [] as any[],
     stints: [] as any[]
 };
+
+const WAITING_TELEMETRY = [{
+    lapX: 0,
+    speed: 0,
+    rpm: 0,
+    throttle: 0,
+    brake: 0,
+    gear: 0,
+    drs: 0,
+    longitudinalG: 0,
+    lateralG: 0,
+    totalG: 0,
+    awaiting: true
+}];
 
 export const useDriverTelemetry = (driverNumber: number, isLive: boolean) => {
     const payload = useRaceStore(state => state.driverLive[driverNumber] || EMPTY_DRIVER_DATA);
@@ -19,5 +33,11 @@ export const useDriverTelemetry = (driverNumber: number, isLive: boolean) => {
         return () => unsubscribe(driverNumber);
     }, [driverNumber, isLive, subscribe, unsubscribe]);
 
-    return payload;
+    return useMemo(() => {
+        if (!isLive || payload.telemetry.length > 0) return payload;
+        return {
+            ...payload,
+            telemetry: WAITING_TELEMETRY
+        };
+    }, [isLive, payload]);
 };

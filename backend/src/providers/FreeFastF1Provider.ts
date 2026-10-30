@@ -32,6 +32,11 @@ export class FreeFastF1Provider implements ITelemetryProvider {
                         this.callbacks?.onRaceControl?.(data.race_control);
                     }
 
+                    const lapCount = data.lap_count ?? data.LapCount ?? data.lapCount;
+                    if (lapCount) {
+                        this.callbacks?.onStreamData?.('lap_count', lapCount);
+                    }
+
                     if (data.telemetry?.Entries) {
                         for (const driverNum of this.subscribedDrivers) {
                             const car = data.telemetry.Entries[0]?.Cars?.[String(driverNum)];

@@ -8,6 +8,8 @@ import { Home } from './Pages/Home';
 const Dashboard = lazy(() => import('./Pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const DriverProfile = lazy(() => import('./Pages/DriverProfile').then(m => ({ default: m.DriverProfile })));
 const LiveTracker = lazy(() => import('./Pages/LiveTracker').then(m => ({ default: m.LiveTracker })));
+const DriverStandingProfile = lazy(() => import('./Pages/DriverStandingProfile').then(m => ({ default: m.DriverStandingProfile })));
+const TeamProfile = lazy(() => import('./Pages/TeamProfile').then(m => ({ default: m.TeamProfile })));
 
 const App = () => {
     return (
@@ -22,6 +24,8 @@ const App = () => {
                     <Route path="/race/:sessionKey" element={<Dashboard />} />
                     <Route path="/race/:sessionKey/driver/:driverId" element={<DriverProfile />} />
                     <Route path="/race/:sessionKey/tracker" element={<LiveTracker />} />
+                    <Route path="/driver/:driverId" element={<DriverStandingProfile />} />
+                    <Route path="/team/:teamId" element={<TeamProfile />} />
                 </Routes>
             </Suspense>
         </BrowserRouter>
