@@ -893,3 +893,44 @@ export const getCleanTelemetry = async (sessionKey: string, driverNumber: number
         locations: locations?.data || []
     };
 };
+// Rebuild from observations up to the caller's broadcast presentation time.
+export const getWeekendTyres = async (sessionKey: number, driverNumber: number, asOf: number) => {
+    const { reconstructTyres } = await import('../calculations/weekendTyres');
+    const info = (await getCached(`tyres_session_${sessionKey}`, 60000,
+        () => openF1Request(`${OPENF1_BASE}/sessions?session_key=${sessionKey}`))).data?.[0];
+    if (!info?.meeting_key) throw new Error('Session unavailable');
+    const sessions = (await getCached(`tyres_meeting_${info.meeting_key}`, 60000,
+        () => openF1Request(`${OPENF1_BASE}/sessions?meeting_key=${info.meeting_key}`))).data || [];
+    const cutoff = Math.min(asOf, Date.now(), Date.parse(info.date_end) || Infinity);
+    const runs: import('../calculations/weekendTyres').TyreRun[] = [];
+    let incomplete = false;
+    const relevant = sessions.filter((s: any) => Date.parse(s.date_start) <= Math.min(cutoff, Date.parse(info.date_start)));
+    for (const session of relevant) {
+        const key = session.session_key;
+        const [stints, laps] = await Promise.all([
+            getCached(`weekend_stints_${key}_${driverNumber}`, 15000, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${key}&driver_number=${driverNumber}`)),
+            getCached(`weekend_laps_${key}_${driverNumber}`, 15000, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${key}&driver_number=${driverNumber}`))
+        ]);
+        const ordered = [...(stints.data || [])].sort((a: any, b: any) => a.stint_number - b.stint_number);
+        ordered.forEach((stint: any, i: number) => {
+            const startLap = Number(stint.lap_start);
+            const sessionLaps = laps.data || [];
+            const firstLap = sessionLaps.find((l: any) => Number(l.lap_number) === startLap);
+            const start = Date.parse(firstLap?.date_start);
+            // Do not reveal future stints or invent timestamps for missing records.
+            if (!Number.isFinite(start)) { incomplete = true; return; }
+            if (start > cutoff) return;
+            const nextStart = Number(ordered[i + 1]?.lap_start) || Infinity;
+            const last = Math.min(Number(stint.lap_end) || Infinity, nextStart - 1);
+            const completed = new Set(sessionLaps.filter((l: any) => {
+                const n = Number(l.lap_number), time = Date.parse(l.date_start), duration = Number(l.lap_duration);
+                const next = sessionLaps.find((p: any) => Number(p.lap_number) === n + 1);
+                const end = duration > 0 ? time + duration * 1000 : Date.parse(next?.date_start);
+                return n >= startLap && n <= last && Number.isFinite(end) && end <= cutoff;
+            }).map((l: any) => Number(l.lap_number))).size;
+            const age = stint.tyre_age_at_start;
+            runs.push({ session: session.session_name, sessionKey: key, start, stint: Number(stint.stint_number), compound: String(stint.compound || 'UNKNOWN').toUpperCase(), startAge: age != null && Number.isFinite(Number(age)) && Number(age) >= 0 ? Number(age) : null, laps: completed });
+        });
+    }
+    return { ...reconstructTyres(runs, sessions.some((s: any) => /sprint/i.test(s.session_name))), asOf: cutoff, incomplete };
+};
