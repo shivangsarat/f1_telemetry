@@ -577,12 +577,13 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
     const championshipDrivers = Array.isArray(input.championshipDrivers) ? input.championshipDrivers : [];
     const sessionResults = Array.isArray(input.sessionResults) ? input.sessionResults : [];
     const sessionInfo = input.sessionInfo || {};
-    const isRace = input.isRace ?? (
-        String(sessionInfo.session_type || sessionInfo.session_name || '').toLowerCase().includes('race')
-        || String(sessionInfo.session_type || '').toLowerCase().includes('sprint')
-        || intervals.length > 0
-        || championshipDrivers.length > 0
-    );
+    const sessionLabel = `${sessionInfo.session_name || ''} ${sessionInfo.session_type || ''}`.toLowerCase();
+    // Championship context and interval messages also exist outside races.
+    const isRace = /qualifying|shootout|practice|testing/.test(sessionLabel)
+        ? false
+        : /\brace\b|\bsprint\b/.test(sessionLabel)
+            ? true
+            : (input.isRace ?? false);
 
     const latestPositions = latestByDriver(positions);
     const initialPositions = earliestByDriver(positions);
@@ -843,15 +844,8 @@ export const calculateRaceView = (input: RaceCalculationInput) => {
         // OpenF1 can encode dns/dnf/dsq as strings ("false"/"true").
         // Treating non-empty strings as booleans marked every live driver DNS.
         // Only trust normalized explicit flags, then use lap-based fallbacks.
-        const status = explicitDns
-            ? 'DNS'
-            : explicitDnf
-                ? 'DNF'
-                : (isRace && completedLapNumber === 0 && maxRaceLap > 3
-                    ? 'DNS'
-                    : (isRace && maxRaceLap > 5 && maxRaceLap - completedLapNumber > 4
-                        ? 'DNF'
-                        : 'Active'));
+        // Lap-count differences alone do not establish retirement or DNS.
+        const status = explicitDns ? 'DNS' : explicitDnf ? 'DNF' : 'Active';
 
         const totalSeconds = completedLaps.reduce((sum, l) => sum + num(l.lap_duration), 0);
         const carTotalTime = isRace && totalSeconds > 0
