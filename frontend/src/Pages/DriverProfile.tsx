@@ -726,7 +726,7 @@ export const DriverProfile = () => {
                 )}
                 
                 {currentDriverInfo && (
-                    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)] gap-6 items-start">
+                    <div className="flex flex-col gap-6">
                         <div className="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg min-w-0">
                             <TyreHistoryWidget driver={currentDriverInfo} />
                             <PitHistoryWidget driver={currentDriverInfo} />
