@@ -61,7 +61,7 @@ const enqueueRequest = <T>(fetcher: () => Promise<T>): Promise<T> => {
     return execute as Promise<T>;
 };
 
-const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>) => {
+const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>, cacheEmpty = false) => {
     const now = Date.now();
     if (cache.has(key) && cache.get(key)!.expires > now) return cache.get(key)!.data;
     if (pendingRequests.has(key)) return pendingRequests.get(key);
@@ -70,7 +70,7 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
         try {
             const res = await enqueueRequest(fetcher);
             
-            if (res.data && (!Array.isArray(res.data) || res.data.length > 0)) {
+            if (res.data && (cacheEmpty || !Array.isArray(res.data) || res.data.length > 0)) {
                 cache.set(key, { data: res, expires: Date.now() + ttlMs });
             }
             
@@ -81,7 +81,7 @@ const getCached = async (key: string, ttlMs: number, fetcher: () => Promise<any>
                 await sleep(1500); 
                 try {
                     const retryRes = await enqueueRequest(fetcher);
-                    if (retryRes.data && (!Array.isArray(retryRes.data) || retryRes.data.length > 0)) {
+                    if (retryRes.data && (cacheEmpty || !Array.isArray(retryRes.data) || retryRes.data.length > 0)) {
                         cache.set(key, { data: retryRes, expires: Date.now() + ttlMs });
                     }
                     return retryRes;
@@ -907,10 +907,16 @@ export const getWeekendTyres = async (sessionKey: number, driverNumber: number, 
     const relevant = sessions.filter((s: any) => Date.parse(s.date_start) <= Math.min(cutoff, Date.parse(info.date_start)));
     for (const session of relevant) {
         const key = session.session_key;
-        const [stints, laps] = await Promise.all([
-            getCached(`weekend_stints_${key}_${driverNumber}`, 15000, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${key}&driver_number=${driverNumber}`)),
-            getCached(`weekend_laps_${key}_${driverNumber}`, 15000, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${key}&driver_number=${driverNumber}`))
+        // One shared fetch per session across all viewed drivers/devices.
+        // Keep completed history for a day; live data has a shared 5s cooldown.
+        const completed = Date.parse(session.date_end) < Date.now() - 120000;
+        const ttl = completed ? 86400000 : 5000;
+        const [allStints, allLaps] = await Promise.all([
+            getCached(`weekend_stints_${key}`, ttl, () => openF1Request(`${OPENF1_BASE}/stints?session_key=${key}`), true),
+            getCached(`weekend_laps_${key}`, ttl, () => openF1Request(`${OPENF1_BASE}/laps?session_key=${key}`), true)
         ]);
+        const stints = { data: (allStints.data || []).filter((row: any) => Number(row.driver_number) === driverNumber) };
+        const laps = { data: (allLaps.data || []).filter((row: any) => Number(row.driver_number) === driverNumber) };
         const ordered = [...(stints.data || [])].sort((a: any, b: any) => a.stint_number - b.stint_number);
         ordered.forEach((stint: any, i: number) => {
             const startLap = Number(stint.lap_start);
