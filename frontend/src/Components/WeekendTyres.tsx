@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRaceStore } from '../store/useRaceStore';
 
 type SetHistory = { session: string; stint: number; laps: number; startAge: number | null; endAge: number | null; alternatives: string[]; reason: string };
 type TyreSet = { id: string; compound: string; age: number | null; inferred: boolean; extra?: boolean; history: SetHistory[] };
@@ -12,11 +13,31 @@ export const WeekendTyres = ({ sessionKey, driverNumber, isLive, delaySeconds }:
     const [error, setError] = useState(false);
     const [selected, setSelected] = useState<string | null>(null);
     const [retry, setRetry] = useState(0);
+    const inPit = useRaceStore(state => {
+        if (!isLive || String(state.liveRace?.sessionInfo?.session_key) !== String(sessionKey)) return undefined;
+        const driver = state.liveRace?.results?.find((row: any) => Number(row.driver_number) === driverNumber);
+        return typeof driver?.in_pit === 'boolean' ? driver.in_pit : undefined;
+    });
+    const previousPit = useRef<boolean | undefined>(undefined);
     useEffect(() => {
-        setData(null); setError(false); setSelected(null);
+        previousPit.current = undefined;
+    }, [sessionKey, driverNumber, isLive, delaySeconds]);
+    useEffect(() => {
+        const exited = previousPit.current === true && inPit === false;
+        previousPit.current = inPit;
+        if (!isLive || !exited) return;
+        // Let provider stint records settle after the delayed pit-exit event.
+        const timer = setTimeout(() => setRetry(n => n + 1), 6000);
+        return () => clearTimeout(timer);
+    }, [inPit, isLive, sessionKey, driverNumber, delaySeconds]);
+    useEffect(() => {
+        setData(null); setSelected(null);
+    }, [sessionKey, driverNumber, isLive, delaySeconds]);
+    useEffect(() => {
+        setError(false);
         if (!sessionKey) return;
         const controller = new AbortController();
-        let timer: ReturnType<typeof setTimeout>;
+
         const load = async () => {
             try {
                 const base = import.meta.env.PROD ? '' : 'http://localhost:8080';
@@ -27,12 +48,10 @@ export const WeekendTyres = ({ sessionKey, driverNumber, isLive, delaySeconds }:
                 if (!controller.signal.aborted) { setData(result); setError(false); }
             } catch {
                 if (!controller.signal.aborted) setError(true);
-            } finally {
-                if (isLive && !controller.signal.aborted) timer = setTimeout(load, 15000);
             }
         };
         void load();
-        return () => { controller.abort(); clearTimeout(timer); };
+        return () => { controller.abort(); };
     }, [sessionKey, driverNumber, isLive, delaySeconds, retry]);
     const detail = data?.sets.find(s => s.id === selected);
     return <section className="bg-gray-900 p-5 rounded-xl border border-gray-800 shadow-lg min-w-0" aria-label="Weekend tyre sets">
@@ -57,6 +76,7 @@ export const WeekendTyres = ({ sessionKey, driverNumber, isLive, delaySeconds }:
                     <p className="text-gray-400 mt-1">{run.reason}{run.alternatives.length ? ` · Also matches: ${run.alternatives.join(', ')}` : ''}</p>
                 </div>)}
             </div>}</div>
+            {isLive && <p className="text-[11px] text-gray-400 mt-3">Snapshot refreshed on page load and pit exit.</p>}
             <p className="text-[11px] text-gray-400 mt-3">≈ inferred age assignment · — unknown age</p>
             <p className="text-[11px] text-gray-500 mt-1">{data.allocationLabel}. Returns unverified. Wet sets shown when observed.</p>
             {data.incomplete && <p className="text-xs text-amber-300 mt-2">Some stint timestamps are missing; history is incomplete.</p>}
