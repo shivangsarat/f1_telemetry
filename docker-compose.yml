@@ -1,0 +1,11 @@
+services:
+  f1-telemetry:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "8080"
+      LIVE_PROVIDER: "${LIVE_PROVIDER:-FREE}"
+    ports:
+      - "127.0.0.1:8080:8080"
+    mem_limit: 512m
