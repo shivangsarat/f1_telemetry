@@ -1,0 +1,57 @@
+name: Manual production deploy (F1 Telemetry)
+# Keep live WebSocket sessions running on ordinary pushes.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: f1-telemetry-production
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/weekend-tyre-sets'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Verify deployment script
+        run: bash -n deploy.sh
+      - name: Build and test backend
+        run: |
+          npm ci --prefix backend --no-audit --no-fund
+          npm run build --prefix backend
+          node --test backend/tests/*.test.cjs
+      - name: Build frontend
+        run: |
+          npm ci --prefix frontend --no-audit --no-fund
+          npm run build --prefix frontend
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/weekend-tyre-sets'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH to authorized host and run reviewed deploy.sh
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for name in SSH_HOST SSH_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+            test -n "${!name}" || { echo "Missing production SSH setting: $name" >&2; exit 1; }
+          done
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_telemetry_prod"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_telemetry_prod" "$HOME/.ssh/known_hosts"
+          ssh -i "$HOME/.ssh/id_telemetry_prod" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=15 \
+            "${SSH_USER}@${SSH_HOST}" 'bash -se' < deploy.sh
