@@ -11,9 +11,14 @@ app.use(cors());
 app.use('/api', apiRouter);
 
 const frontendDistPath = path.join(__dirname, '../../frontend/dist');
-app.use(express.static(frontendDistPath));
+/** Prevent caching the SPA entry point so a normal browser refresh discovers the latest hashed assets. */
+function setStaticCacheHeaders(response: http.ServerResponse, filename: string): void {
+    if (path.basename(filename) === 'index.html') response.setHeader('Cache-Control', 'no-cache, must-revalidate');
+}
+app.use(express.static(frontendDistPath, { setHeaders: setStaticCacheHeaders }));
 
 app.get(/.*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
 

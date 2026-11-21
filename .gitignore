@@ -1,5 +1,14 @@
+# Production and local secrets must never be committed.
+/.env
+/.env.*
+!/.env.example
+# Local builds and runtime files.
 frontend/node_modules/
+frontend/dist/
 backend/node_modules/
 backend/dist/
 backend/.env
+backend/.env.*
+*.log
+.DS_Store
 f1-time-machine/node_modules/
