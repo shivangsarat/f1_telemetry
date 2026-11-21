@@ -8,7 +8,18 @@ concurrency:
   group: f1-telemetry-production
   cancel-in-progress: false
 jobs:
+  check_branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the production branch
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != 'refs/heads/weekend-tyre-sets' ]]; then
+            echo 'Deployments must be started with the weekend-tyre-sets branch selected.' >&2
+            exit 1
+          fi
   verify:
+    needs: check_branch
     if: github.ref == 'refs/heads/weekend-tyre-sets'
     runs-on: ubuntu-latest
     steps:
