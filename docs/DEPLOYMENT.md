@@ -44,6 +44,8 @@ Set up in **this repository** (and separately in GRIDLOCK, if you also want its 
 3. The deployment user must reach the VM over SSH and be able to pull the correct Git branch and access Docker. GitHub-hosted runners have changing egress IP addresses: confirm your OCI SSH/network policy permits the intended connection or use the manual VM command instead.
 4. Open **Actions → Manual production deploy (F1 Telemetry) → Run workflow**, select `weekend-tyre-sets`, and approve the production environment when prompted.
 
+The deploy workflow file is also registered on the default `main` branch solely so GitHub exposes the manual **Run workflow** button. **Always select `weekend-tyre-sets` in the branch dropdown**; the workflow explicitly fails on other branches. The code that is built and deployed comes from the selected production branch.
+
 The workflow never transfers the contents of `.env` through GitHub. Pushing code only triggers CI build/tests; it **does not automatically restart the dashboard**.
 
 ## Keep production keys outside Git
